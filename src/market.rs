@@ -10,13 +10,13 @@ use crossbeam::channel::{Sender,Receiver,bounded, unbounded, SendError};
 const ARRAY_SIZE: usize = 512;
 
 struct PricePair {
-    price: f32,
+    price: u64,
     quantity: u32,
 }
 
 impl Default for PricePair {
     fn default() -> Self {
-        PricePair {price: 0.0, quantity: 0}
+        PricePair {price: 0, quantity: 0}
     }
 }
 
@@ -36,40 +36,37 @@ struct GlobalBook {
 }
 
 
-//main market thread
-    //generates price
 
 
-enum OrderType {
-    Ask,
-    Bid,
+// Represents the two types of orders that can be on the exchange
+enum MarketOrder {
+
+    Ask { quantity: u32,
+          price: u64,
+          money_address: Arc<AtomicU64>
+    },
+
+    Bid {
+        quantity: u32,
+        money_address: Arc<AtomicU64> },
 }
-struct MarketOrder {
-    quantity: u32,
-    // the user
-    money_address:  Arc<AtomicU64>,
-    order_type: OrderType,
-}
-
-
 
 //exchange thread functions
 
     //pub ask (quantity, address of money) void returns
-pub fn ask(quantity:u32, money_address: Arc<AtomicU64>, sender: Sender<MarketOrder> ) -> Result<(), SendError<MarketOrder>> {
-    let order = MarketOrder {
+pub fn ask(quantity:u32, money_address: Arc<AtomicU64>,price: u64 ,sender: Sender<MarketOrder> ) -> Result<(), SendError<MarketOrder>> {
+    let order = MarketOrder::Ask {
         quantity,
+        price,
         money_address,
-        order_type: OrderType::Ask
     };
 
     sender.send(order)
 }
 pub fn bid(quantity:u32, money_address: Arc<AtomicU64>,sender: Sender<MarketOrder> ) -> Result<(),SendError<MarketOrder>> {
-    let order = MarketOrder {
+    let order = MarketOrder::Bid {
         quantity,
         money_address,
-        order_type: OrderType::Bid
     };
 
    sender.send(order)
@@ -116,59 +113,72 @@ pub fn handle_orders(receiver: Receiver<MarketOrder>) {
         // This block updates it from the user side
         {
             // make sure it is locked
-            let mut book  = match market_order.order_type {
-                OrderType::Ask => &mut GLOBAL_BOOK.ask.write().unwrap(),
-                OrderType::Bid => &mut GLOBAL_BOOK.bid.write().unwrap(),
+            match market_order {
+                MarketOrder::Ask { quantity, price, money_address} => {
+                    let mut book = GLOBAL_BOOK.ask.write().unwrap();
+
+
+
+
+
+
+
+
+
+
+
+                },
+
+                MarketOrder::Bid { quantity, money_address} => {
+                    let mut book = GLOBAL_BOOK.ask.write().unwrap();
+
+                    let mut index = book.first_index;
+                    let mut remaining = quantity;
+                    let mut money_difference = 0;
+
+                    // if we are consuming more than one row
+                    while remaining > book.table[index].quantity {
+
+                        // add the amount of money to the row as the quantity
+                        money_difference += book.table[index].price * book.table[index].quantity as u64;
+
+                        book.table[index].quantity = 0;
+
+
+                        assert!(index > 0);
+                        index -= 1;
+
+                        assert!(quantity as i32 - (book.table[index].quantity as i32)< 0);
+                        remaining -= book.table[index].quantity;
+
+                    }
+
+                    // if there is still a row left to complete
+                    if quantity > 0 {
+
+                        assert!(quantity < book.table[index].quantity);
+
+                        let price = book.table[index].price;
+
+                        //assume compiler magic will make this more than one assignment
+                        money_difference += price * (quantity as u64);
+
+
+                        //update the book to reflect the new quantity
+                        book.table[index].quantity = book.table[index].quantity - quantity;
+                        break;
+                    }
+
+                    book.first_index = index;
+                    money_address.fetch_sub(money_difference, Ordering::Relaxed);
+                }
             };
 
-            let mut index = book.first_index;
-            let mut quantity = market_order.quantity;
-            let mut money_difference:f32 = 0.0;
 
-            // if we are consuming more than one row
-            while quantity > book.table[index].quantity {
-
-                // add the amount of money to the row as the quantity
-                money_difference += book.table[index].price * (book.table[index].quantity as f32);
-
-                book.table[index].quantity = 0;
-
-
-                assert!(index > 0);
-                index -= 1;
-
-                assert!(quantity as i32 - (book.table[index].quantity as i32)< 0);
-                quantity -= book.table[index].quantity;
-
-            }
-
-            // if there is still a row left to complete
-            if quantity > 0 {
-
-                assert!(quantity < book.table[index].quantity);
-
-                let price = book.table[index].price;
-
-                //assume compiler magic will make this more than one assignment
-                money_difference += price * (quantity as f32);
-
-                let money_difference = match market_order.order_type {
-                    OrderType::Bid => -1.0 * money_difference,
-                    OrderType::Ask => money_difference,
-                };
-                //update the book to reflect the new quantity
-                book.table[index].quantity = book.table[index].quantity - quantity;
-                break;
-            }
-
-            book.first_index = index;
 
         }
 
-        // if the stock is sold back we shoyuld probably do something
-        if(matches!(market_order.order_type, OrderType::Ask)) {
 
-        }
 
     }
 }
