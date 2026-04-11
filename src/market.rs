@@ -21,12 +21,12 @@ impl Default for PricePair {
 }
 
 struct Book {
-     first_index: u32,
+     first_index: usize,
      table: [PricePair; ARRAY_SIZE],
 }
 impl Default for Book {
     fn default() -> Self {
-        Book {first_index: (ARRAY_SIZE/2) as u32, table: std::array::from_fn(|_| PricePair::default())}
+        Book {first_index: (ARRAY_SIZE/2), table: std::array::from_fn(|_| PricePair::default())}
     }
 }
 
@@ -82,10 +82,7 @@ pub fn bid(quantity:u32, money_address: Arc<AtomicU64>,sender: Sender<MarketOrde
 
         static SYSTEM_END: AtomicBool = AtomicBool::new(false);
 
-//priv handle_orders
-// this is a thread excecuting in a loop that just pulls off of the circular arrays
-// then atomically updates the amount of money gained or lost at the memory address
-//TODO we have to determine how the data is shared better
+
 
 
 static GLOBAL_BOOK: LazyLock<GlobalBook> = LazyLock::new(|| {
@@ -94,7 +91,9 @@ static GLOBAL_BOOK: LazyLock<GlobalBook> = LazyLock::new(|| {
         bid: RwLock::new(Book::default()),
     }
 });
-fn handle_orders(receiver: Receiver<MarketOrder>) {
+
+///pulls off queue and updates book should be its own thread
+pub fn handle_orders(receiver: Receiver<MarketOrder>) {
     loop {
         //check for system end
         if(SYSTEM_END.load(Ordering::Relaxed) == true) {
@@ -113,18 +112,65 @@ fn handle_orders(receiver: Receiver<MarketOrder>) {
             },
         };
 
-        let book : &RwLock<Book> = match market_order.order_type {
-            OrderType::Ask => & GLOBAL_BOOK.ask,
-            OrderType::Bid => & GLOBAL_BOOK.bid,
-        };
+        // it being in its own scope allows the lock to be released
+        // This block updates it from the user side
+        {
+            // make sure it is locked
+            let mut book  = match market_order.order_type {
+                OrderType::Ask => &mut GLOBAL_BOOK.ask.write().unwrap(),
+                OrderType::Bid => &mut GLOBAL_BOOK.bid.write().unwrap(),
+            };
+
+            let mut index = book.first_index;
+            let mut quantity = market_order.quantity;
+            let mut money_difference:f32 = 0.0;
+
+            // if we are consuming more than one row
+            while quantity > book.table[index].quantity {
+
+                // add the amount of money to the row as the quantity
+                money_difference += book.table[index].price * (book.table[index].quantity as f32);
+
+                book.table[index].quantity = 0;
 
 
+                assert!(index > 0);
+                index -= 1;
 
+                assert!(quantity as i32 - (book.table[index].quantity as i32)< 0);
+                quantity -= book.table[index].quantity;
 
+            }
+
+            // if there is still a row left to complete
+            if quantity > 0 {
+
+                assert!(quantity < book.table[index].quantity);
+
+                let price = book.table[index].price;
+
+                //assume compiler magic will make this more than one assignment
+                money_difference += price * (quantity as f32);
+
+                let money_difference = match market_order.order_type {
+                    OrderType::Bid => -1.0 * money_difference,
+                    OrderType::Ask => money_difference,
+                };
+                //update the book to reflect the new quantity
+                book.table[index].quantity = book.table[index].quantity - quantity;
+                break;
+            }
+
+            book.first_index = index;
+
+        }
+
+        // if the stock is sold back we shoyuld probably do something
+        if(matches!(market_order.order_type, OrderType::Ask)) {
+
+        }
 
     }
-
-
 }
 
 
