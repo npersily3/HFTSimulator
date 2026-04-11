@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock,LazyLock};
+use std::sync::{Arc, OnceLock, LazyLock, RwLock};
 use crossbeam::queue::ArrayQueue;
 use crossbeam::channel::{Sender,Receiver,bounded, unbounded, SendError};
 
@@ -13,15 +13,26 @@ struct PricePair {
     price: f32,
     quantity: u32,
 }
-struct Book {
-     first_index: AtomicU32,
-     table: [PricePair; ARRAY_SIZE],
+
+impl Default for PricePair {
+    fn default() -> Self {
+        PricePair {price: 0.0, quantity: 0}
+    }
 }
 
+struct Book {
+     first_index: u32,
+     table: [PricePair; ARRAY_SIZE],
+}
+impl Default for Book {
+    fn default() -> Self {
+        Book {first_index: (ARRAY_SIZE/2) as u32, table: std::array::from_fn(|_| PricePair::default())}
+    }
+}
 
 struct GlobalBook {
-    ask: Book,
-    bid: Book,
+    ask: RwLock<Book>,
+    bid: RwLock<Book>,
 }
 
 
@@ -76,7 +87,14 @@ pub fn bid(quantity:u32, money_address: Arc<AtomicU64>,sender: Sender<MarketOrde
 // then atomically updates the amount of money gained or lost at the memory address
 //TODO we have to determine how the data is shared better
 
-fn handle_orders(receiver: Receiver<MarketOrder>, ) {
+
+static GLOBAL_BOOK: LazyLock<GlobalBook> = LazyLock::new(|| {
+    GlobalBook {
+        ask: RwLock::new(Book::default()),
+        bid: RwLock::new(Book::default()),
+    }
+});
+fn handle_orders(receiver: Receiver<MarketOrder>) {
     loop {
         //check for system end
         if(SYSTEM_END.load(Ordering::Relaxed) == true) {
@@ -94,6 +112,13 @@ fn handle_orders(receiver: Receiver<MarketOrder>, ) {
                 return;
             },
         };
+
+        let book : &RwLock<Book> = match market_order.order_type {
+            OrderType::Ask => & GLOBAL_BOOK.ask,
+            OrderType::Bid => & GLOBAL_BOOK.bid,
+        };
+
+
 
 
 
