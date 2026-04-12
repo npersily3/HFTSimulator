@@ -1,8 +1,10 @@
 use crossbeam::channel::{Receiver, SendError, Sender, bounded, unbounded};
 use crossbeam::queue::ArrayQueue;
+use std::cell::LazyCell;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, OnceLock, RwLock};
+use std::time::Instant;
 
 // A file containing the implementation
 
@@ -42,8 +44,10 @@ struct MarketOrder {
     money_address: Arc<AtomicU64>,
 }
 struct HistoryEntry {
-    market_order: MarketOrder,
-    timestamp: u64,
+    order_type: OrderType,
+    price: u64,
+    quantity: u32,
+    timestamp: Instant,
 }
 const HISTORY_SIZE: usize = 1 << 15;
 static MARKET_HISTORY: LazyLock<ArrayQueue<HistoryEntry>> =
@@ -54,16 +58,38 @@ struct BookEntry {
     asks: VecDeque<MarketOrder>,
 }
 
+impl BookEntry {
+    fn new() -> Self {
+        let bids: VecDeque<MarketOrder> = VecDeque::new();
+        let asks: VecDeque<MarketOrder> = VecDeque::new();
+
+        let book_entry = BookEntry { bids, asks };
+        book_entry
+    }
+}
+
 const BOOK_SIZE: usize = 1 << 15;
-struct Book {
+pub struct Book {
     // you are accepting a race condition here because the user can update spread inbetween calculations
     ask_index: AtomicUsize,
     bid_index: AtomicUsize,
     table: [BookEntry; BOOK_SIZE],
 }
+impl Book {
+    //TODO
+    fn new() -> Book {
+        let mut table: [BookEntry; BOOK_SIZE] = std::array::from_fn(|_| BookEntry::new());
+        let ask_index = AtomicUsize::new(0);
+        let bid_index = AtomicUsize::new(10);
 
-// you will have to initially populate the book
-static ORDER_BOOK: OnceLock<Book> = OnceLock::new();
+        let book = Book {
+            ask_index,
+            bid_index,
+            table,
+        };
+        book
+    }
+}
 
 pub fn limit_ask(
     price: u64,
@@ -132,12 +158,106 @@ pub fn bid(
 
 static SYSTEM_END: AtomicBool = AtomicBool::new(false);
 
-fn handle_ask(market_order: MarketOrder) {}
+fn handle_ask(market_order: MarketOrder, sender: &Sender<HistoryEntry>, order_book: &mut Book) {
+    let mut index = order_book.bid_index.load(Ordering::Relaxed);
 
-fn handle_bid(market_order: MarketOrder) {}
+    //create local mutables of the order
+    let mut price = market_order.price;
+    let mut ask_quantity = market_order.quantity;
+
+    //TODO handle non limit orders better
+    //traversing from the highest to lowest bid we are willing to go to
+    while index >= price as usize {
+        //if we have any bids at the current price
+        while order_book.table[index].bids.is_empty() == false {
+            let current_bid = order_book.table[index].bids.front_mut();
+            debug_assert!(current_bid.is_some());
+            let current_bid = current_bid.unwrap();
+
+            // if it was cancelled pop it off and move over
+            if (current_bid.is_canceled.load(Ordering::Relaxed)) {
+                order_book.table[index].bids.pop_front();
+                continue;
+            }
+            // let mut money_difference = 0;
+            // if(current_bid.quantity > ask_quantity) {
+            //     current_bid.quantity -= ask_quantity;
+            //     money_difference = ask_quantity as u64 * index as u64;
+            // } else {
+            //     ask_quantity -= current_bid.quantity;
+            //     money_difference = money_difference * index as u64;
+            // }
+
+
+
+            // if I am not going to consume another entry
+            if (current_bid.quantity >= ask_quantity) {
+                current_bid.quantity -= ask_quantity;
+
+                let money_difference = ask_quantity as u64 * (index as u64);
+
+                market_order.money_address.fetch_add(money_difference, Ordering::Relaxed);
+                current_bid.money_address.fetch_sub(money_difference, Ordering::Relaxed);
+
+                let record = HistoryEntry {
+                    order_type: OrderType::Ask,
+                    price: money_difference,
+                    quantity: market_order.quantity,
+                    timestamp: Instant::now(),
+                };
+                let sender_status = sender.send(record);
+                match sender_status {
+                    Ok(_) => {}
+                    Err(_) => {
+                        panic!("history channel disconnected")
+                    }
+                }
+
+                // if took exactly the last amount pop it off
+                if (current_bid.quantity == 0) {
+                    order_book.table[index].bids.pop_front();
+                }
+
+                return;
+            } else {
+                ask_quantity -= current_bid.quantity;
+
+                let money_difference = current_bid.quantity as u64 * (index as u64);
+
+                market_order.money_address.fetch_add(money_difference, Ordering::Relaxed);
+                current_bid.money_address.fetch_sub(money_difference, Ordering::Relaxed);
+
+                let record = HistoryEntry {
+                    order_type: OrderType::Ask,
+                    price: money_difference,
+                    quantity: market_order.quantity,
+                    timestamp: Instant::now(),
+                };
+                let sender_status = sender.send(record);
+                match sender_status {
+                    Ok(_) => {}
+                    Err(_) => {
+                        panic!("history channel disconnected")
+                    }
+                }
+
+                //remove the entry we just ran through
+                order_book.table[index].bids.pop_front();
+            }
+        }
+
+        index -= 1;
+    }
+}
+
+fn handle_bid(market_order: MarketOrder, sender: &Sender<HistoryEntry>, order_book: &mut Book) {}
 
 ///pulls off queue and updates book should be its own thread
-pub fn handle_orders(receiver: Receiver<MarketOrder>) {
+pub fn handle_orders(
+    receiver: Receiver<MarketOrder>,
+    sender: Sender<HistoryEntry>,
+    mut order_book: Book,
+) {
     loop {
         //check for system end
         if (SYSTEM_END.load(Ordering::Relaxed) == true) {
@@ -157,10 +277,10 @@ pub fn handle_orders(receiver: Receiver<MarketOrder>) {
         };
         match market_order.order_type {
             OrderType::Ask => {
-                handle_ask(market_order);
+                handle_ask(market_order, &sender, &mut order_book);
             }
             OrderType::Bid => {
-                handle_bid(market_order);
+                handle_bid(market_order, &sender, &mut order_book);
             }
         }
     }
