@@ -53,15 +53,20 @@ const HISTORY_SIZE: usize = 1 << 15;
 static MARKET_HISTORY: LazyLock<ArrayQueue<HistoryEntry>> =
     LazyLock::new(|| ArrayQueue::new(HISTORY_SIZE));
 
+struct QueueEntry {
+    is_canceled: Arc<AtomicBool>,
+    quantity: u32,
+    money_address: Arc<AtomicU64>,
+}
 struct BookEntry {
-    bids: VecDeque<MarketOrder>,
-    asks: VecDeque<MarketOrder>,
+    bids: VecDeque<QueueEntry>,
+    asks: VecDeque<QueueEntry>,
 }
 
 impl BookEntry {
     fn new() -> Self {
-        let bids: VecDeque<MarketOrder> = VecDeque::new();
-        let asks: VecDeque<MarketOrder> = VecDeque::new();
+        let bids: VecDeque<QueueEntry> = VecDeque::new();
+        let asks: VecDeque<QueueEntry> = VecDeque::new();
 
         let book_entry = BookEntry { bids, asks };
         book_entry
@@ -162,7 +167,7 @@ fn handle_ask(market_order: MarketOrder, sender: &Sender<HistoryEntry>, order_bo
     let mut index = order_book.bid_index.load(Ordering::Relaxed);
 
     //create local mutables of the order
-    let mut price = market_order.price;
+    let price = market_order.price;
     let mut ask_quantity = market_order.quantity;
 
     //TODO handle non limit orders better
@@ -179,78 +184,126 @@ fn handle_ask(market_order: MarketOrder, sender: &Sender<HistoryEntry>, order_bo
                 order_book.table[index].bids.pop_front();
                 continue;
             }
-            // let mut money_difference = 0;
-            // if(current_bid.quantity > ask_quantity) {
-            //     current_bid.quantity -= ask_quantity;
-            //     money_difference = ask_quantity as u64 * index as u64;
-            // } else {
-            //     ask_quantity -= current_bid.quantity;
-            //     money_difference = money_difference * index as u64;
-            // }
 
+            let mut money_difference = 0;
+            let ask_is_smaller = current_bid.quantity > ask_quantity;
 
-
-            // if I am not going to consume another entry
-            if (current_bid.quantity >= ask_quantity) {
+            if ask_is_smaller {
                 current_bid.quantity -= ask_quantity;
-
-                let money_difference = ask_quantity as u64 * (index as u64);
-
-                market_order.money_address.fetch_add(money_difference, Ordering::Relaxed);
-                current_bid.money_address.fetch_sub(money_difference, Ordering::Relaxed);
-
-                let record = HistoryEntry {
-                    order_type: OrderType::Ask,
-                    price: money_difference,
-                    quantity: market_order.quantity,
-                    timestamp: Instant::now(),
-                };
-                let sender_status = sender.send(record);
-                match sender_status {
-                    Ok(_) => {}
-                    Err(_) => {
-                        panic!("history channel disconnected")
-                    }
-                }
-
-                // if took exactly the last amount pop it off
-                if (current_bid.quantity == 0) {
-                    order_book.table[index].bids.pop_front();
-                }
-
-                return;
+                money_difference = ask_quantity as u64 * index as u64;
             } else {
                 ask_quantity -= current_bid.quantity;
+                money_difference = money_difference * index as u64;
+            }
 
-                let money_difference = current_bid.quantity as u64 * (index as u64);
+            market_order.money_address.fetch_add(money_difference, Ordering::Relaxed);
+            current_bid.money_address.fetch_sub(money_difference, Ordering::Relaxed);
 
-                market_order.money_address.fetch_add(money_difference, Ordering::Relaxed);
-                current_bid.money_address.fetch_sub(money_difference, Ordering::Relaxed);
-
-                let record = HistoryEntry {
-                    order_type: OrderType::Ask,
-                    price: money_difference,
-                    quantity: market_order.quantity,
-                    timestamp: Instant::now(),
-                };
-                let sender_status = sender.send(record);
-                match sender_status {
-                    Ok(_) => {}
-                    Err(_) => {
-                        panic!("history channel disconnected")
-                    }
+            let record = HistoryEntry {
+                order_type: OrderType::Ask,
+                price: money_difference,
+                quantity: market_order.quantity,
+                timestamp: Instant::now(),
+            };
+            let sender_status = sender.send(record);
+            match sender_status {
+                Ok(_) => {}
+                Err(_) => {
+                    panic!("history channel disconnected")
                 }
+            }
 
-                //remove the entry we just ran through
+            if ask_is_smaller {
                 order_book.table[index].bids.pop_front();
             }
         }
 
         index -= 1;
     }
+
+    order_book.bid_index.store(price as usize, Ordering::Relaxed);
+
+
+    let queue_entry = QueueEntry {
+        is_canceled: market_order.is_canceled.clone(),
+        quantity: ask_quantity,
+        money_address: market_order.money_address.clone(),
+
+    };
+    // at this point there are no bids for what we want so we have to instantiate a new ask at our pricepoint
+    order_book.table[price as usize].asks.push_back(queue_entry);
 }
 
-fn handle_bid(market_order: MarketOrder, sender: &Sender<HistoryEntry>, order_book: &mut Book) {}
+fn handle_bid(market_order: MarketOrder, sender: &Sender<HistoryEntry>, order_book: &mut Book) {
+    let mut index = order_book.ask_index.load(Ordering::Relaxed);
+
+    //create local mutables of the order
+    let price = market_order.price;
+    let mut bid_quantity = market_order.quantity;
+
+    //TODO handle non limit orders better
+    //traversing from the lowest to highest ask we are willing to go to
+    while price >= index as u64 {
+        //if we have any bids at the current price
+        while order_book.table[index].asks.is_empty() == false {
+            let current_ask = order_book.table[index].asks.front_mut();
+            debug_assert!(current_ask.is_some());
+            let current_ask = current_ask.unwrap();
+
+            // if it was cancelled pop it off and move over
+            if (current_ask.is_canceled.load(Ordering::Relaxed)) {
+                order_book.table[index].asks.pop_front();
+                continue;
+            }
+
+            let mut money_difference = 0;
+            let bid_is_smaller = current_ask.quantity > bid_quantity;
+
+            if bid_is_smaller {
+                current_ask.quantity -= bid_quantity;
+                money_difference = bid_quantity as u64 * index as u64;
+            } else {
+                bid_quantity -= current_ask.quantity;
+                money_difference = money_difference * index as u64;
+            }
+
+            market_order.money_address.fetch_add(money_difference, Ordering::Relaxed);
+            current_ask.money_address.fetch_sub(money_difference, Ordering::Relaxed);
+
+            let record = HistoryEntry {
+                order_type: OrderType::Bid,
+                price: money_difference,
+                quantity: market_order.quantity,
+                timestamp: Instant::now(),
+            };
+            let sender_status = sender.send(record);
+            match sender_status {
+                Ok(_) => {}
+                Err(_) => {
+                    panic!("history channel disconnected")
+                }
+            }
+
+            if bid_is_smaller {
+                order_book.table[index].asks.pop_front();
+            }
+        }
+
+        index += 1;
+    }
+
+    order_book.ask_index.store(price as usize, Ordering::Relaxed);
+
+
+    let queue_entry = QueueEntry {
+        is_canceled: market_order.is_canceled.clone(),
+        quantity: bid_quantity,
+        money_address: market_order.money_address.clone(),
+
+    };
+    // at this point there are no bids for what we want so we have to instantiate a new ask at our pricepoint
+    order_book.table[price as usize].bids.push_back(queue_entry);
+}
 
 ///pulls off queue and updates book should be its own thread
 pub fn handle_orders(
