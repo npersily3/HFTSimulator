@@ -158,7 +158,7 @@ pub fn bid(
     money_address: Arc<AtomicU64>,
     sender: Sender<MarketOrder>,
 ) -> Result<(), SendError<MarketOrder>> {
-    limit_bid(0, is_canceled, quantity, money_address, sender)
+    limit_bid(u64::MAX, is_canceled, quantity, money_address, sender)
 }
 
 static SYSTEM_END: AtomicBool = AtomicBool::new(false);
@@ -175,6 +175,8 @@ fn handle_ask(market_order: MarketOrder, sender: &Sender<HistoryEntry>, order_bo
     while index >= price as usize {
         //if we have any bids at the current price
         while order_book.table[index].bids.is_empty() == false {
+
+
             let current_bid = order_book.table[index].bids.front_mut();
             debug_assert!(current_bid.is_some());
             let current_bid = current_bid.unwrap();
@@ -193,7 +195,7 @@ fn handle_ask(market_order: MarketOrder, sender: &Sender<HistoryEntry>, order_bo
                 money_difference = ask_quantity as u64 * index as u64;
             } else {
                 ask_quantity -= current_bid.quantity;
-                money_difference = money_difference * index as u64;
+                money_difference = current_bid.quantity as u64 * index as u64;
             }
 
             market_order.money_address.fetch_add(money_difference, Ordering::Relaxed);
@@ -216,10 +218,18 @@ fn handle_ask(market_order: MarketOrder, sender: &Sender<HistoryEntry>, order_bo
             if ask_is_smaller {
                 order_book.table[index].bids.pop_front();
             }
+
+            // if we have finished,  update the bid to the current one and then return
+            if(ask_quantity == 0) {
+                order_book.bid_index.store(index, Ordering::Relaxed);
+                return;
+            }
         }
 
         index -= 1;
+
     }
+
 
     order_book.bid_index.store(price as usize, Ordering::Relaxed);
 
@@ -232,6 +242,11 @@ fn handle_ask(market_order: MarketOrder, sender: &Sender<HistoryEntry>, order_bo
     };
     // at this point there are no bids for what we want so we have to instantiate a new ask at our pricepoint
     order_book.table[price as usize].asks.push_back(queue_entry);
+
+    // if the new ask will be the lowest ask
+    if(order_book.ask_index.load(Ordering::Relaxed) > price as usize) {
+        order_book.ask_index.store(price as usize, Ordering::Relaxed);
+    }
 }
 
 fn handle_bid(market_order: MarketOrder, sender: &Sender<HistoryEntry>, order_book: &mut Book) {
@@ -264,11 +279,11 @@ fn handle_bid(market_order: MarketOrder, sender: &Sender<HistoryEntry>, order_bo
                 money_difference = bid_quantity as u64 * index as u64;
             } else {
                 bid_quantity -= current_ask.quantity;
-                money_difference = money_difference * index as u64;
+                money_difference = current_ask.quantity as u64 * index as u64;
             }
 
-            market_order.money_address.fetch_add(money_difference, Ordering::Relaxed);
-            current_ask.money_address.fetch_sub(money_difference, Ordering::Relaxed);
+            market_order.money_address.fetch_sub(money_difference, Ordering::Relaxed);
+            current_ask.money_address.fetch_add(money_difference, Ordering::Relaxed);
 
             let record = HistoryEntry {
                 order_type: OrderType::Bid,
@@ -287,6 +302,11 @@ fn handle_bid(market_order: MarketOrder, sender: &Sender<HistoryEntry>, order_bo
             if bid_is_smaller {
                 order_book.table[index].asks.pop_front();
             }
+
+            if(bid_quantity == 0) {
+                order_book.ask_index.store(index, Ordering::Relaxed);
+                return;
+            }
         }
 
         index += 1;
@@ -303,6 +323,11 @@ fn handle_bid(market_order: MarketOrder, sender: &Sender<HistoryEntry>, order_bo
     };
     // at this point there are no bids for what we want so we have to instantiate a new ask at our pricepoint
     order_book.table[price as usize].bids.push_back(queue_entry);
+
+    // if the new ask will be the lowest ask
+    if(order_book.bid_index.load(Ordering::Relaxed) < price as usize) {
+        order_book.bid_index.store(price as usize, Ordering::Relaxed);
+    }
 }
 
 ///pulls off queue and updates book should be its own thread
