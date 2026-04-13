@@ -55,12 +55,12 @@ pub struct Book {
     // you are accepting a race condition here because the user can update spread inbetween calculations
     ask_index: Arc<AtomicUsize>,
     bid_index: Arc<AtomicUsize>,
-    table: [BookEntry; BOOK_SIZE],
+    table: Vec<BookEntry>,
 }
 impl Book {
     //TODO
     pub(crate) fn new(ask_index: Arc<AtomicUsize>, bid_index: Arc<AtomicUsize>) -> Book {
-        let table: [BookEntry; BOOK_SIZE] = std::array::from_fn(|_| BookEntry::new());
+        let table: Vec<BookEntry> = (0..BOOK_SIZE).map(|_| BookEntry::new()).collect();
 
         let book = Book {
             ask_index,

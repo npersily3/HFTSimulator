@@ -3,7 +3,7 @@ use crate::market::INITIAL_MONEY;
 use crossbeam::channel::{Receiver, SendError, Sender, bounded, unbounded};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
-use std::thread::sleep;
+use std::thread::{sleep, JoinHandle};
 use std::time::Duration;
 
 mod exchange;
@@ -36,8 +36,8 @@ fn seeder(sender: Sender<MarketOrder>, initial_true_value: u64) {
     }
 }
 
-const NUM_NOISE_THREADS: usize = 1;
-const NUM_FUNDAMENTAL_THREADS: usize = 1;
+const NUM_NOISE_THREADS: usize = 5;
+const NUM_FUNDAMENTAL_THREADS: usize = 5;
 const NUM_EXCHANGE_THREADS: usize = 1;
 const NUM_PERSONAL_THREADS: usize = 0;
 fn main() {
@@ -51,6 +51,8 @@ fn main() {
     let ask_index = Arc::new(AtomicUsize::new(0));
     let true_price = Arc::new(AtomicU64::new(0));
 
+    let mut handles: Vec<JoinHandle<()>> = Vec::new();
+
     for _ in 0..NUM_FUNDAMENTAL_THREADS {
         // if have to do it this way because the move transfers ownership
         let sender = sender.clone();
@@ -60,7 +62,7 @@ fn main() {
         let ask_index = ask_index.clone();
         let true_price = true_price.clone();
 
-        std::thread::spawn(move || {
+       let handle = std::thread::spawn(move || {
             market::fundamentalist(
                 sender,
                 start,
@@ -70,18 +72,21 @@ fn main() {
                 true_price,
             );
         });
+
+        handles.push(handle);
     }
 
-    for _ in 0..NUM_FUNDAMENTAL_THREADS {
+    for _ in 0..NUM_NOISE_THREADS {
         // if have to do it this way because the move transfers ownership
         let sender = sender.clone();
         let start = start.clone();
         let tick = tick.clone();
 
 
-        std::thread::spawn(move || {
+        let handle = std::thread::spawn(move || {
             market::noise(sender, start, Option::from(tick));
         });
+        handles.push(handle);
     }
 
     let mut order_book = Book::new(bid_index.clone(), ask_index.clone());
@@ -90,10 +95,18 @@ fn main() {
     let receiver = receiver.clone();
     let tick = tick.clone();
 
-    std::thread::spawn(move || {
+   let handle= std::thread::spawn(move || {
         exchange::handle_orders(receiver, &mut order_book, tick);
     });
 
+    handles.push(handle);
+
     sleep(Duration::from_secs(1));
     utils::SYSTEM_END.store(true, Ordering::Relaxed);
+    println!("finished");
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+
 }

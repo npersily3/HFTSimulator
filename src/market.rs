@@ -130,6 +130,12 @@ pub fn fundamentalist(sender: Sender<MarketOrder>, start: Arc<Barrier>, tick: Op
     start.wait();
 
     loop {
+
+        if utils::SYSTEM_END.load(Ordering::Relaxed) {
+            break;
+        }
+
+
         let mid_price = ((ask_index.load(Ordering::Relaxed) + bid_index.load(Ordering::Relaxed))/2) as i64;
         let true_price = true_price.load(Ordering::Relaxed) as i64;
 
@@ -156,4 +162,6 @@ pub fn fundamentalist(sender: Sender<MarketOrder>, start: Arc<Barrier>, tick: Op
             }
         }
     }
+
+    println!("money: {} in cents", money.load(Ordering::Relaxed));
 }
