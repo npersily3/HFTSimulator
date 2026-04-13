@@ -9,20 +9,6 @@ use crate::utils;
 
 // A file containing the implementation
 
-struct PricePair {
-    price: u64,
-    quantity: u32,
-}
-
-impl Default for PricePair {
-    fn default() -> Self {
-        PricePair {
-            price: 0,
-            quantity: 0,
-        }
-    }
-}
-
 pub enum OrderType {
     Ask,
     Bid,
@@ -67,16 +53,14 @@ impl BookEntry {
 const BOOK_SIZE: usize = 1 << 15;
 pub struct Book {
     // you are accepting a race condition here because the user can update spread inbetween calculations
-    ask_index: AtomicUsize,
-    bid_index: AtomicUsize,
+    ask_index: Arc<AtomicUsize>,
+    bid_index: Arc<AtomicUsize>,
     table: [BookEntry; BOOK_SIZE],
 }
 impl Book {
     //TODO
-    fn new() -> Book {
-        let mut table: [BookEntry; BOOK_SIZE] = std::array::from_fn(|_| BookEntry::new());
-        let ask_index = AtomicUsize::new(0);
-        let bid_index = AtomicUsize::new(10);
+    pub(crate) fn new(ask_index: Arc<AtomicUsize>, bid_index: Arc<AtomicUsize>) -> Book {
+        let table: [BookEntry; BOOK_SIZE] = std::array::from_fn(|_| BookEntry::new());
 
         let book = Book {
             ask_index,
@@ -94,7 +78,7 @@ pub fn limit_ask(
     money_address: Arc<AtomicU64>,
     sender: Sender<MarketOrder>,
 ) -> Result<(), SendError<MarketOrder>> {
-    if (is_canceled.load(Ordering::Relaxed)) {
+    if is_canceled.load(Ordering::Relaxed) {
         //figure out how to return safely;
         panic!("stop trying to f up the exchange")
     }
@@ -116,7 +100,7 @@ pub fn limit_bid(
     money_address: Arc<AtomicU64>,
     sender: Sender<MarketOrder>,
 ) -> Result<(), SendError<MarketOrder>> {
-    if (is_canceled.load(Ordering::Relaxed)) {
+    if is_canceled.load(Ordering::Relaxed) {
         //figure out how to return safely;
         panic!("stop trying to f up the exchange")
     }
@@ -169,7 +153,7 @@ fn handle_ask(market_order: MarketOrder,order_book: &mut Book) {
             let current_bid = current_bid.unwrap();
 
             // if it was cancelled pop it off and move over
-            if (current_bid.is_canceled.load(Ordering::Relaxed)) {
+            if current_bid.is_canceled.load(Ordering::Relaxed) {
                 order_book.table[index].bids.pop_front();
                 continue;
             }
@@ -211,7 +195,7 @@ fn handle_ask(market_order: MarketOrder,order_book: &mut Book) {
             }
 
             // if we have finished,  update the bid to the current one and then return
-            if (ask_quantity == 0) {
+            if ask_quantity == 0 {
                 order_book.bid_index.store(index, Ordering::Relaxed);
                 return;
             }
@@ -233,7 +217,7 @@ fn handle_ask(market_order: MarketOrder,order_book: &mut Book) {
     order_book.table[price as usize].asks.push_back(queue_entry);
 
     // if the new ask will be the lowest ask
-    if (order_book.ask_index.load(Ordering::Relaxed) > price as usize) {
+    if order_book.ask_index.load(Ordering::Relaxed) > price as usize {
         order_book
             .ask_index
             .store(price as usize, Ordering::Relaxed);
@@ -257,7 +241,7 @@ fn handle_bid(market_order: MarketOrder, order_book: &mut Book) {
             let current_ask = current_ask.unwrap();
 
             // if it was cancelled pop it off and move over
-            if (current_ask.is_canceled.load(Ordering::Relaxed)) {
+            if current_ask.is_canceled.load(Ordering::Relaxed) {
                 order_book.table[index].asks.pop_front();
                 continue;
             }
@@ -298,7 +282,7 @@ fn handle_bid(market_order: MarketOrder, order_book: &mut Book) {
                 order_book.table[index].asks.pop_front();
             }
 
-            if (bid_quantity == 0) {
+            if bid_quantity == 0 {
                 order_book.ask_index.store(index, Ordering::Relaxed);
                 return;
             }
@@ -320,7 +304,7 @@ fn handle_bid(market_order: MarketOrder, order_book: &mut Book) {
     order_book.table[price as usize].bids.push_back(queue_entry);
 
     // if the new ask will be the lowest ask
-    if (order_book.bid_index.load(Ordering::Relaxed) < price as usize) {
+    if order_book.bid_index.load(Ordering::Relaxed) < price as usize {
         order_book
             .bid_index
             .store(price as usize, Ordering::Relaxed);
@@ -328,35 +312,40 @@ fn handle_bid(market_order: MarketOrder, order_book: &mut Book) {
 }
 
 ///pulls off queue and updates book should be its own thread
-pub fn handle_orders(receiver: Receiver<MarketOrder>, mut order_book: Book, start: Barrier) {
+pub fn handle_orders(receiver: Receiver<MarketOrder>, mut order_book: &mut Book, tick: Arc<Barrier>) {
 
 
-    start.wait();
+
 
     loop {
         //check for system end
-        if (utils::SYSTEM_END.load(Ordering::Relaxed) == true) {
+        if utils::SYSTEM_END.load(Ordering::Relaxed) == true {
             return;
         }
 
         // basically I am initially Receiving a result type then converting it in the next line to
         // either a market order or an error
-        let market_order = receiver.recv();
+        let market_order = receiver.try_recv();
 
-        let market_order: MarketOrder = match market_order {
-            Ok(market_order) => market_order,
-            Err(error) => {
-                println!("error receiving market order: {}", error);
-                return;
+        match market_order {
+            //if there are orders process
+            Ok(market_order) => {
+                match market_order.order_type {
+                    OrderType::Ask => {
+                        handle_ask(market_order, &mut order_book);
+                    }
+                    OrderType::Bid => {
+                        handle_bid(market_order, &mut order_book);
+                    }
+                }
             }
-        };
-        match market_order.order_type {
-            OrderType::Ask => {
-                handle_ask(market_order, &mut order_book);
-            }
-            OrderType::Bid => {
-                handle_bid(market_order, &mut order_book);
+            // if there are no orders, move onto the next tick
+            Err(_) => {
+                tick.wait();
             }
         }
+
+
+
     }
 }
