@@ -18,3 +18,7 @@
 // fn set_event(sender: Sender<()>) {
 //     //SYSTEM_SHUTDOWN
 // }
+
+use std::sync::atomic::AtomicBool;
+
+pub static SYSTEM_END: AtomicBool = AtomicBool::new(false);
