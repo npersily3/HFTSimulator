@@ -1,3 +1,4 @@
+use crate::utils;
 use crossbeam::channel::{Receiver, SendError, Sender, bounded, unbounded};
 use crossbeam::queue::ArrayQueue;
 use std::cell::LazyCell;
@@ -5,7 +6,6 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, LazyLock, OnceLock, RwLock};
 use std::time::Instant;
-use crate::utils;
 
 // A file containing the implementation
 
@@ -134,9 +134,7 @@ pub fn bid(
     limit_bid(u64::MAX, is_canceled, quantity, money_address, sender)
 }
 
-
-
-fn handle_ask(market_order: MarketOrder,order_book: &mut Book) {
+fn handle_ask(market_order: MarketOrder, order_book: &mut Book) {
     let mut index = order_book.bid_index.load(Ordering::Relaxed);
 
     //create local mutables of the order
@@ -312,11 +310,11 @@ fn handle_bid(market_order: MarketOrder, order_book: &mut Book) {
 }
 
 ///pulls off queue and updates book should be its own thread
-pub fn handle_orders(receiver: Receiver<MarketOrder>, mut order_book: &mut Book, tick: Arc<Barrier>) {
-
-
-
-
+pub fn handle_orders(
+    receiver: Receiver<MarketOrder>,
+    mut order_book: &mut Book,
+    tick: Arc<Barrier>,
+) {
     loop {
         //check for system end
         if utils::SYSTEM_END.load(Ordering::Relaxed) == true {
@@ -329,23 +327,18 @@ pub fn handle_orders(receiver: Receiver<MarketOrder>, mut order_book: &mut Book,
 
         match market_order {
             //if there are orders process
-            Ok(market_order) => {
-                match market_order.order_type {
-                    OrderType::Ask => {
-                        handle_ask(market_order, &mut order_book);
-                    }
-                    OrderType::Bid => {
-                        handle_bid(market_order, &mut order_book);
-                    }
+            Ok(market_order) => match market_order.order_type {
+                OrderType::Ask => {
+                    handle_ask(market_order, &mut order_book);
                 }
-            }
+                OrderType::Bid => {
+                    handle_bid(market_order, &mut order_book);
+                }
+            },
             // if there are no orders, move onto the next tick
             Err(_) => {
                 tick.wait();
             }
         }
-
-
-
     }
 }

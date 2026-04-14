@@ -6,8 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 use std::thread::{JoinHandle, sleep};
 use std::time::Duration;
-use windows::Win32::System::Diagnostics::Debug::DebugBreak;
-
+use windows_sys::Win32::System::Diagnostics::Debug::DebugBreak;
 
 mod corporation;
 mod exchange;
@@ -17,7 +16,9 @@ mod utils;
 macro_rules! ASSERT {
     ($x:expr) => {
         if !($x) {
-            unsafe { windows::Win32::System::Diagnostics::Debug::DebugBreak(); }
+            unsafe {
+                DebugBreak();
+            }
         }
     };
 }
@@ -55,9 +56,15 @@ fn main() {
     // later set to bounded and compare
     let (sender, receiver) = unbounded();
     let start = Arc::new(Barrier::new(
-        NUM_FUNDAMENTAL_THREADS + NUM_NOISE_THREADS + NUM_EXCHANGE_THREADS + NUM_PERSONAL_THREADS + NUM_CORPORATATION_THREADS,
+        NUM_FUNDAMENTAL_THREADS
+            + NUM_NOISE_THREADS
+            + NUM_EXCHANGE_THREADS
+            + NUM_PERSONAL_THREADS
+            + NUM_CORPORATATION_THREADS,
     ));
-    let tick = Arc::new(Barrier::new(NUM_FUNDAMENTAL_THREADS + NUM_NOISE_THREADS + NUM_CORPORATATION_THREADS));
+    let tick = Arc::new(Barrier::new(
+        NUM_FUNDAMENTAL_THREADS + NUM_NOISE_THREADS + NUM_CORPORATATION_THREADS,
+    ));
     let bid_index = Arc::new(AtomicUsize::new(0));
     let ask_index = Arc::new(AtomicUsize::new(0));
     let true_price = Arc::new(AtomicU64::new(0));
@@ -76,9 +83,7 @@ fn main() {
         let handle = std::thread::Builder::new()
             .name(format!("fundamentalist {}", i))
             .spawn(move || {
-
-
-
+                ASSERT!(false);
                 market::fundamentalist(
                     sender,
                     start,
@@ -124,14 +129,16 @@ fn main() {
 
     handles.push(handle);
 
-
     let tick = tick.clone();
     let true_price = true_price.clone();
     let start = start.clone();
 
-    let handle = std::thread::Builder::new().name("corporation".to_string()).spawn(move || {
-       corporation::set_true_price(true_price, start, tick);
-    }).unwrap();
+    let handle = std::thread::Builder::new()
+        .name("corporation".to_string())
+        .spawn(move || {
+            corporation::set_true_price(true_price, start, tick);
+        })
+        .unwrap();
 
     handles.push(handle);
 
