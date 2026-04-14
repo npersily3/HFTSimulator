@@ -22,3 +22,10 @@
 use std::sync::atomic::AtomicBool;
 
 pub static SYSTEM_END: AtomicBool = AtomicBool::new(false);
+
+
+
+#[cfg(not(debug_assertions))]
+macro_rules! ASSERT {
+    ($x:expr) => {};
+}

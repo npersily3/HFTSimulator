@@ -6,7 +6,7 @@ pub const STARTING_PRICE: u64 = 1000;
 pub fn set_true_price(true_price: Arc<AtomicU64>, start: Arc<Barrier>, tick: Arc<Barrier>) {
     
     start.wait();
-    
+    println!("started");
     loop {
         if utils::SYSTEM_END.load(Ordering::Relaxed) {
             break;

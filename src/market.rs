@@ -154,6 +154,7 @@ pub fn fundamentalist(sender: Sender<MarketOrder>, start: Arc<Barrier>, tick: Op
 
         match tick.as_ref() {
             Some(tick) => {
+                println!("entered tick");
                 tick.wait();
             }
             None => {
