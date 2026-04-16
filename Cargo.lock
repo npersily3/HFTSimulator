@@ -7,6 +7,7 @@ name = "HFTSimulator"
 version = "0.1.0"
 dependencies = [
  "crossbeam",
+ "fmt",
  "rand",
  "rand_distr",
  "windows-sys",
@@ -117,6 +118,12 @@ name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
+
+[[package]]
+name = "fmt"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09904adae26440d46daeacb5ed7922fee69d43ebf84d31e078cd49652cecd718"
 
 [[package]]
 name = "foldhash"

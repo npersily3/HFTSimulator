@@ -1,15 +1,16 @@
-use crate::exchange::{Book, MarketOrder};
+
+use crate::exchange::{ MarketOrder};
 use crate::{exchange, utils};
 use crossbeam::channel::Sender;
 use rand::distr::Distribution;
 use rand::prelude::*;
 use rand::rngs::ThreadRng;
-use rand_distr::{Exp, Exp1, LogNormal};
-use std::ops::Deref;
+use rand_distr::{ Exp1, LogNormal};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 use std::thread::sleep;
 use std::time::Duration;
+use crate::utils::ASSERT;
 
 pub const INITIAL_MONEY: u64 = 1000000;
 
@@ -52,9 +53,9 @@ impl SleepSampler {
     }
 }
 
-const QUANTITY_MEAN: f64 = 10.0;
+const QUANTITY_MEAN: f64 = 100.0;
 // use
-const QUANTITY_STD: f64 = 20.0;
+const QUANTITY_STD: f64 = 100.0;
 const SLEEP_MEAN_IN_MS: f64 = 100.0;
 const ORDER_PROBABILITY: f64 = 0.1;
 
@@ -125,6 +126,7 @@ pub fn fundamentalist(
     let money = Arc::new(AtomicU64::new(INITIAL_MONEY));
 
     let is_canceled = Arc::new(AtomicBool::new(false));
+
     start.wait();
 
     loop {
@@ -164,7 +166,6 @@ pub fn fundamentalist(
 
         match tick.as_ref() {
             Some(tick) => {
-                println!("entered tick");
                 tick.wait();
             }
             None => {

@@ -9,6 +9,7 @@ opt-level = 0
 
 [dependencies]
 crossbeam = "0.8.4"
+fmt = "0.1.0"
 rand = "0.10.1"
 rand_distr = "0.6.0"
 windows-sys = { version = "0.59", features = ["Win32_System_Diagnostics_Debug"] }

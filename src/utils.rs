@@ -22,7 +22,30 @@
 use std::sync::atomic::AtomicBool;
 
 pub static SYSTEM_END: AtomicBool = AtomicBool::new(false);
+#[cfg(debug_assertions)]
+macro_rules! ASSERT {
+    ($x:expr) => {
+        if !($x) {
+            unsafe {
+                DebugBreak();
+            }
+        }
+    };
+}
+#[cfg(not(debug_assertions))]
+macro_rules! ASSERT {
+    ($x:expr) => {
+        return;
+    };
+}
+pub fn init() {
+    std::panic::set_hook(Box::new(|info| {
+        println!("Panic: {info}");
+        unsafe { core::arch::asm!("int3"); }
+    }));
+}
 
+pub(crate) use ASSERT;
 #[cfg(not(debug_assertions))]
 macro_rules! ASSERT {
     ($x:expr) => {};
