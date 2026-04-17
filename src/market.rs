@@ -129,6 +129,7 @@ pub fn fundamentalist(
 
     start.wait();
 
+    println!("money {}", money.load(Ordering::Relaxed));
     loop {
         if utils::SYSTEM_END.load(Ordering::Relaxed) {
             break;
@@ -166,6 +167,7 @@ pub fn fundamentalist(
 
         match tick.as_ref() {
             Some(tick) => {
+
                 tick.wait();
             }
             None => {

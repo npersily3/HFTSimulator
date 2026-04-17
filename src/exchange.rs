@@ -407,7 +407,8 @@ pub fn handle_orders(
         match market_order {
             //if there are orders process
             Ok(market_order) => {
-                println!("{}", market_order);
+                //ASSERT!(market_order.money_address.load(Ordering::Relaxed) < (1 <<15));
+           //     println!("{}", market_order);
 
                 match market_order.order_type {
                     OrderType::Ask => {
