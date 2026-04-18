@@ -1,6 +1,6 @@
-use crate::DebugBreak;
+use crate::{DebugBreak, NUM_TRADER_THREADS};
 use crate::utils;
-use crate::utils::ASSERT;
+use crate::utils::{TickBarrier, ASSERT};
 use crate::corporation;
 use crossbeam::channel::{Receiver, SendError, Sender};
 use crossbeam::queue::ArrayQueue;
@@ -43,8 +43,7 @@ pub struct HistoryEntry {
     timestamp: Instant,
 }
 const HISTORY_SIZE: usize = 1 << 15;
-static MARKET_HISTORY: LazyLock<ArrayQueue<HistoryEntry>> =
-    LazyLock::new(|| ArrayQueue::new(HISTORY_SIZE));
+
 
 struct QueueEntry {
     is_canceled: Arc<AtomicBool>,
@@ -155,7 +154,7 @@ pub fn bid(
     limit_bid(0, is_canceled, quantity, money_address, sender)
 }
 
-fn handle_ask(market_order: MarketOrder, order_book: &mut Book) {
+fn handle_ask(market_order: MarketOrder, order_book: &mut Book, history_book: &ArrayQueue<HistoryEntry>) {
     let mut index = order_book.highest_bid_index.load(Ordering::Relaxed);
 
 
@@ -185,23 +184,22 @@ fn handle_ask(market_order: MarketOrder, order_book: &mut Book) {
                 continue;
             }
 
-            let mut money_difference = 0;
             let ask_is_smaller = current_bid.quantity > ask_quantity;
+            let trade_quantity = if ask_is_smaller { ask_quantity } else { current_bid.quantity };
+            let money_difference = trade_quantity as u64 * index as u64;
+
+            if money_difference > current_bid.money_address.load(Ordering::Relaxed) {
+                return;
+            }
 
             if ask_is_smaller {
                 current_bid.quantity -= ask_quantity;
-                money_difference = ask_quantity as u64 * index as u64;
             } else {
                 ask_quantity -= current_bid.quantity;
-                money_difference = current_bid.quantity as u64 * index as u64;
             }
 
-            market_order
-                .money_address
-                .fetch_add(money_difference, Ordering::Relaxed);
-            current_bid
-                .money_address
-                .fetch_sub(money_difference, Ordering::Relaxed);
+            market_order.money_address.fetch_add(money_difference, Ordering::Relaxed);
+            current_bid.money_address.fetch_sub(money_difference, Ordering::Relaxed);
 
             let record = HistoryEntry {
                 order_type: OrderType::Ask,
@@ -210,12 +208,13 @@ fn handle_ask(market_order: MarketOrder, order_book: &mut Book) {
                 timestamp: Instant::now(),
             };
 
-            match MARKET_HISTORY.push(record) {
-                Ok(_) => {}
-                Err(_) => {
-                    panic!("history channel disconnected")
-                }
-            }
+            // match history_book.push(record) {
+            //     Ok(_) => {}
+            //     Err(_) => {
+            //         println!("history channel disconnected, program likely over");
+            //         return;
+            //     }
+            // }
 
             if ask_is_smaller {
                 order_book.table[index].bids.pop_front();
@@ -251,7 +250,7 @@ fn handle_ask(market_order: MarketOrder, order_book: &mut Book) {
     }
 }
 
-fn handle_bid(market_order: MarketOrder, order_book: &mut Book) {
+fn handle_bid(market_order: MarketOrder, order_book: &mut Book, history_book: &ArrayQueue<HistoryEntry>) {
     let mut index = order_book.lowest_ask_index.load(Ordering::Relaxed);
 
 
@@ -281,23 +280,22 @@ fn handle_bid(market_order: MarketOrder, order_book: &mut Book) {
                 continue;
             }
 
-            let mut money_difference = 0;
             let bid_is_smaller = current_ask.quantity > bid_quantity;
+            let trade_quantity = if bid_is_smaller { bid_quantity } else { current_ask.quantity };
+            let money_difference = trade_quantity as u64 * index as u64;
+
+            if market_order.money_address.load(Ordering::Relaxed) < money_difference {
+                return;
+            }
 
             if bid_is_smaller {
                 current_ask.quantity -= bid_quantity;
-                money_difference = bid_quantity as u64 * index as u64;
             } else {
                 bid_quantity -= current_ask.quantity;
-                money_difference = current_ask.quantity as u64 * index as u64;
             }
 
-            market_order
-                .money_address
-                .fetch_sub(money_difference, Ordering::Relaxed);
-            current_ask
-                .money_address
-                .fetch_add(money_difference, Ordering::Relaxed);
+            market_order.money_address.fetch_sub(money_difference, Ordering::Relaxed);
+            current_ask.money_address.fetch_add(money_difference, Ordering::Relaxed);
 
             let record = HistoryEntry {
                 order_type: OrderType::Bid,
@@ -306,12 +304,13 @@ fn handle_bid(market_order: MarketOrder, order_book: &mut Book) {
                 timestamp: Instant::now(),
             };
 
-            match MARKET_HISTORY.push(record) {
-                Ok(_) => {}
-                Err(_) => {
-                    panic!("history channel disconnected")
-                }
-            }
+            // match history_book.push(record) {
+            //     Ok(_) => {}
+            //     Err(_) => {
+            //         println!("history channel disconnected, program likely over");
+            //         return;
+            //     }
+            // }
 
             if bid_is_smaller {
                 order_book.table[index].asks.pop_front();
@@ -384,9 +383,9 @@ fn init_exchange(book: &mut Book) {
 pub fn handle_orders(
     receiver: Receiver<MarketOrder>,
     mut order_book: &mut Book,
-    tick: Arc<Barrier>,
+    tick: Arc<TickBarrier>,
     start: Arc<Barrier>,
-
+    history_book: &ArrayQueue<HistoryEntry>,
 
 ) {
 
@@ -398,6 +397,12 @@ pub fn handle_orders(
         //check for system end
         if utils::SYSTEM_END.load(Ordering::Relaxed) == true {
             return;
+        }
+
+        loop {
+            if tick.wait_counter.load(Ordering::Relaxed) == NUM_TRADER_THREADS  {
+                break;
+            }
         }
 
         // basically I am initially Receiving a result type then converting it in the next line to
@@ -412,10 +417,10 @@ pub fn handle_orders(
 
                 match market_order.order_type {
                     OrderType::Ask => {
-                        handle_ask(market_order, &mut order_book);
+                        handle_ask(market_order, &mut order_book, &history_book);
                     }
                     OrderType::Bid => {
-                        handle_bid(market_order, &mut order_book);
+                        handle_bid(market_order, &mut order_book, &history_book);
                     }
                 }
             }

@@ -1,11 +1,13 @@
-use crate::exchange::{Book, MarketOrder};
+use crate::exchange::{Book, HistoryEntry, MarketOrder};
 use crate::market::INITIAL_MONEY;
 use crossbeam::channel::{Sender, unbounded};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 use std::thread::{JoinHandle, sleep};
 use std::time::Duration;
+use crossbeam::queue::ArrayQueue;
 use windows_sys::Win32::System::Diagnostics::Debug::DebugBreak;
+use crate::utils::TickBarrier;
 
 mod corporation;
 mod exchange;
@@ -14,17 +16,21 @@ mod utils;
 
 
 
-const NUM_NOISE_THREADS: usize = 1;
-const NUM_FUNDAMENTAL_THREADS: usize = 1;
+
+const NUM_NOISE_THREADS: usize = 3;
+const NUM_FUNDAMENTAL_THREADS: usize = 3;
 const NUM_EXCHANGE_THREADS: usize = 1;
 const NUM_CORPORATATION_THREADS: usize = 1;
 const NUM_PERSONAL_THREADS: usize = 0;
 
+const NUM_TRADER_THREADS: usize = NUM_PERSONAL_THREADS+ NUM_FUNDAMENTAL_THREADS + NUM_NOISE_THREADS ;
 const NUM_THREADS: usize = NUM_FUNDAMENTAL_THREADS
     + NUM_NOISE_THREADS
     + NUM_EXCHANGE_THREADS
     + NUM_PERSONAL_THREADS
     + NUM_CORPORATATION_THREADS;
+
+const HISTORY_SIZE: usize = 1 << 15;
 fn main() {
     utils::init();
     // later set to bounded and compare
@@ -32,7 +38,7 @@ fn main() {
     let start = Arc::new(Barrier::new(
         NUM_THREADS,
     ));
-    let tick = Arc::new(Barrier::new(
+    let tick = Arc::new(TickBarrier::new(
         NUM_FUNDAMENTAL_THREADS + NUM_NOISE_THREADS + NUM_CORPORATATION_THREADS,
     ));
     let highest_bid_index = Arc::new(AtomicUsize::new(0));
@@ -90,6 +96,7 @@ fn main() {
 
 
     let mut order_book = Book::new(highest_ask_index.clone(),lowest_ask_index.clone(),highest_bid_index.clone(),lowest_bid_index.clone());
+    let order_history: ArrayQueue<HistoryEntry> = ArrayQueue::new(HISTORY_SIZE);
 
     //for _ in 0..NUM_EXCHANGE_THREADS {
     let receiver = receiver.clone();
@@ -98,7 +105,7 @@ fn main() {
     let handle = std::thread::Builder::new()
         .name("exchange".to_string())
         .spawn(move || {
-            exchange::handle_orders(receiver, &mut order_book, tick1,start1);
+            exchange::handle_orders(receiver, &mut order_book, tick1,start1, &order_history);
         })
         .unwrap();
 

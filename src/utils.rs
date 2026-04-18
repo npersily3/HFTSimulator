@@ -19,7 +19,8 @@
 //     //SYSTEM_SHUTDOWN
 // }
 
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::Barrier;
 
 pub static SYSTEM_END: AtomicBool = AtomicBool::new(false);
 #[cfg(debug_assertions)]
@@ -46,7 +47,34 @@ pub fn init() {
 }
 
 pub(crate) use ASSERT;
+use crate::NUM_TRADER_THREADS;
+
 #[cfg(not(debug_assertions))]
 macro_rules! ASSERT {
     ($x:expr) => {};
+}
+
+pub struct  TickBarrier {
+    barrier: Barrier,
+    pub(crate) wait_counter: AtomicUsize
+}
+
+impl TickBarrier {
+    pub fn new(thread_count: usize) -> Self {
+        let tick_barrier = TickBarrier {
+            barrier: Barrier::new(thread_count),
+            wait_counter: AtomicUsize::new(0)
+        };
+        tick_barrier
+    }
+
+    pub fn wait(&self) {
+        let counter = self.wait_counter.fetch_add(1, Ordering::Relaxed);
+
+        if(counter == NUM_TRADER_THREADS) {
+            self.wait_counter.store(0, Ordering::Relaxed);
+        }
+
+        self.barrier.wait();
+    }
 }

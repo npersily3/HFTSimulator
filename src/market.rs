@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 use std::thread::sleep;
 use std::time::Duration;
-use crate::utils::ASSERT;
+use crate::utils::{TickBarrier, ASSERT};
 
 pub const INITIAL_MONEY: u64 = 1000000;
 
@@ -59,7 +59,7 @@ const QUANTITY_STD: f64 = 100.0;
 const SLEEP_MEAN_IN_MS: f64 = 100.0;
 const ORDER_PROBABILITY: f64 = 0.1;
 
-pub fn noise(sender: Sender<MarketOrder>, start: Arc<Barrier>, tick: Option<Arc<Barrier>>) {
+pub fn noise(sender: Sender<MarketOrder>, start: Arc<Barrier>, tick: Option<Arc<TickBarrier>>) {
     let money = Arc::new(AtomicU64::new(INITIAL_MONEY));
     let mut quantity_sampler = QuantitySampler::new(QUANTITY_MEAN, QUANTITY_STD);
     let mut sleep_sampler = SleepSampler::new();
@@ -111,14 +111,17 @@ pub fn noise(sender: Sender<MarketOrder>, start: Arc<Barrier>, tick: Option<Arc<
         }
     }
 
+    let thread = std::thread::current();
+    let name = thread.name().unwrap_or("<unnamed>");
     let final_money = money.load(Ordering::Relaxed);
+    println!("final_money: {} ({})", final_money, name);
 }
 
 const THRESHOLD: i64 = 50;
 pub fn fundamentalist(
     sender: Sender<MarketOrder>,
     start: Arc<Barrier>,
-    tick: Option<Arc<Barrier>>,
+    tick: Option<Arc<TickBarrier>>,
     ask_index: Arc<AtomicUsize>,
     bid_index: Arc<AtomicUsize>,
     true_price: Arc<AtomicU64>,
@@ -176,5 +179,8 @@ pub fn fundamentalist(
         }
     }
 
-    println!("money: {} in cents", money.load(Ordering::Relaxed));
+    let thread = std::thread::current();
+    let name = thread.name().unwrap_or("<unnamed>");
+
+    println!("final money: {} in cents ({})", money.load(Ordering::Relaxed), name);
 }
