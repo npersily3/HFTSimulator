@@ -69,6 +69,15 @@ pub fn noise(sender: Sender<MarketOrder>, start: Arc<Barrier>, tick: Option<Arc<
 
     loop {
         if utils::SYSTEM_END.load(Ordering::Relaxed) {
+            match tick.as_ref() {
+                Some(tick) => {
+
+                    tick.wait();
+                }
+                None => {
+                    sleep(Duration::from_millis(200));
+                }
+            }
             break;
         }
 
@@ -135,6 +144,15 @@ pub fn fundamentalist(
     println!("money {}", money.load(Ordering::Relaxed));
     loop {
         if utils::SYSTEM_END.load(Ordering::Relaxed) {
+            match tick.as_ref() {
+                Some(tick) => {
+
+                    tick.wait();
+                }
+                None => {
+                    sleep(Duration::from_millis(200));
+                }
+            }
             break;
         }
 

@@ -396,6 +396,7 @@ pub fn handle_orders(
     loop {
         //check for system end
         if utils::SYSTEM_END.load(Ordering::Relaxed) == true {
+            tick.wait();
             return;
         }
 

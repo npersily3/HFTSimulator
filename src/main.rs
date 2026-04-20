@@ -38,9 +38,7 @@ fn main() {
     let start = Arc::new(Barrier::new(
         NUM_THREADS,
     ));
-    let tick = Arc::new(TickBarrier::new(
-        NUM_FUNDAMENTAL_THREADS + NUM_NOISE_THREADS + NUM_CORPORATATION_THREADS,
-    ));
+    let tick = Arc::new(TickBarrier::new());
     let highest_bid_index = Arc::new(AtomicUsize::new(0));
     let lowest_ask_index = Arc::new(AtomicUsize::new(0));
     let true_price = Arc::new(AtomicU64::new(corporation::STARTING_PRICE));
@@ -125,7 +123,7 @@ fn main() {
     handles.push(handle);
 
     sleep(Duration::from_secs(5));
-    utils::SYSTEM_END.store(true, Ordering::Relaxed);
+   tick.
 
     for handle in handles {
         handle.join().unwrap();
