@@ -100,10 +100,11 @@ fn main() {
     let receiver = receiver.clone();
     let tick1 = tick.clone();
     let start1 = start.clone();
+    let true_price_exchange = true_price.clone();
     let handle = std::thread::Builder::new()
         .name("exchange".to_string())
         .spawn(move || {
-            exchange::handle_orders(receiver, &mut order_book, tick1,start1, &order_history);
+            exchange::handle_orders(receiver, &mut order_book, tick1, start1, &order_history, true_price_exchange);
         })
         .unwrap();
 

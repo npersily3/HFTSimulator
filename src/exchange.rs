@@ -9,6 +9,7 @@ use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, LazyLock};
 use std::time::Instant;
+use std::io::Write;
 // A file containing the implementation
 
 #[derive(Debug)]
@@ -386,37 +387,30 @@ pub fn handle_orders(
     tick: Arc<TickBarrier>,
     start: Arc<Barrier>,
     history_book: &ArrayQueue<HistoryEntry>,
-
+    true_price: Arc<AtomicU64>,
 ) {
-
     init_exchange(&mut order_book);
 
     start.wait();
 
-    loop {
-        //check for system end
+    let stdout = std::io::stdout();
+    let mut out = std::io::BufWriter::new(stdout.lock());
+    let mut tick_num: u64 = 0;
 
+    loop {
         loop {
-            if utils::SYSTEM_END.load(Ordering::Relaxed) == true {
+            if utils::SYSTEM_END.load(Ordering::Relaxed) {
                 return;
             }
-            //once everyone has submitted their orders
             if tick.wait_counter.load(Ordering::SeqCst) >= NUM_TRADER_THREADS {
                 break;
             }
         }
 
-        // basically I am initially Receiving a result type then converting it in the next line to
-        // either a market order or an error
-
         let market_order = receiver.try_recv();
 
         match market_order {
-            //if there are orders process
             Ok(market_order) => {
-                //ASSERT!(market_order.money_address.load(Ordering::Relaxed) < (1 <<15));
-               println!("{}", market_order);
-
                 match market_order.order_type {
                     OrderType::Ask => {
                         handle_ask(market_order, &mut order_book, &history_book);
@@ -426,8 +420,14 @@ pub fn handle_orders(
                     }
                 }
             }
-            // if there are no orders, move onto the next tick
             Err(_) => {
+                let best_bid = order_book.lowest_bid_index.load(Ordering::Relaxed);
+                let best_ask = order_book.highest_ask_index.load(Ordering::Relaxed);
+                let mid = (best_bid + best_ask) / 2;
+                let true_p = true_price.load(Ordering::Relaxed);
+                let _ = writeln!(out, "TICK:{},{},{},{},{}", tick_num, best_bid, best_ask, mid, true_p);
+                let _ = out.flush();
+                tick_num += 1;
                 tick.wake();
             }
         }
