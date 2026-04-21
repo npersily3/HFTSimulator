@@ -112,7 +112,7 @@ fn main() {
     let tick = tick.clone();
     let true_price = true_price.clone();
     let start = start.clone();
-
+    let end = tick.clone();
     let handle = std::thread::Builder::new()
         .name("corporation".to_string())
         .spawn(move || {
@@ -123,7 +123,9 @@ fn main() {
     handles.push(handle);
 
     sleep(Duration::from_secs(5));
-   tick.
+
+    end.shutdown();
+
 
     for handle in handles {
         handle.join().unwrap();

@@ -396,11 +396,16 @@ pub fn handle_orders(
     loop {
         //check for system end
         if utils::SYSTEM_END.load(Ordering::Relaxed) == true {
-            tick.wait();
+
             return;
         }
 
         loop {
+            if utils::SYSTEM_END.load(Ordering::Relaxed) == true {
+
+                return;
+            }
+
             if tick.wait_counter.load(Ordering::Relaxed) == NUM_TRADER_THREADS  {
                 break;
             }
@@ -414,7 +419,7 @@ pub fn handle_orders(
             //if there are orders process
             Ok(market_order) => {
                 //ASSERT!(market_order.money_address.load(Ordering::Relaxed) < (1 <<15));
-           //     println!("{}", market_order);
+               println!("{}", market_order);
 
                 match market_order.order_type {
                     OrderType::Ask => {
@@ -428,6 +433,11 @@ pub fn handle_orders(
             // if there are no orders, move onto the next tick
             Err(_) => {
                 tick.wait();
+                //check for system end
+                if utils::SYSTEM_END.load(Ordering::Relaxed) == true {
+
+                    return;
+                }
             }
         }
     }

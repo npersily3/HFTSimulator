@@ -19,9 +19,10 @@
 //     //SYSTEM_SHUTDOWN
 // }
 
+use crossbeam::channel::{Receiver, RecvError, Sender, unbounded};
+use crossbeam::select;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::Barrier;
-use crossbeam::channel::{unbounded, Receiver, RecvError, Sender};
+use std::sync::{Barrier, Condvar, Mutex};
 
 pub static SYSTEM_END: AtomicBool = AtomicBool::new(false);
 #[cfg(debug_assertions)]
@@ -43,69 +44,59 @@ macro_rules! ASSERT {
 pub fn init() {
     std::panic::set_hook(Box::new(|info| {
         println!("Panic: {info}");
-        unsafe { core::arch::asm!("int3"); }
+        unsafe {
+            core::arch::asm!("int3");
+        }
     }));
 }
 
-pub(crate) use ASSERT;
 use crate::NUM_TRADER_THREADS;
+pub(crate) use ASSERT;
 
 #[cfg(not(debug_assertions))]
 macro_rules! ASSERT {
     ($x:expr) => {};
 }
-enum Messages {
-    Tick,
-    End,
-    Start
-}
-pub struct {
 
-}
 
-pub struct  TickBarrier {
-    sender: Sender<Messages>,
-    receiver: Receiver<Messages>,
-    pub(crate) wait_counter: AtomicUsize
+pub struct TickBarrier {
+    pub(crate) cvar: Condvar,
+    lock: Mutex<usize>,
+
+    pub(crate) wait_counter: AtomicUsize,
 }
 
 impl TickBarrier {
     pub fn new() -> Self {
-        let (sender, receiver) = unbounded();
         let tick_barrier = TickBarrier {
-            sender,
-            receiver,
-            wait_counter: AtomicUsize::new(0)
+            cvar: Condvar::new(),
+            lock: Mutex::new(0),
+            wait_counter: AtomicUsize::new(0),
         };
         tick_barrier
     }
 
-    pub fn wait(&self) -> Messages {
+    pub fn wait(&self) {
+        let mut guard = self.lock.lock().unwrap();
         let counter = self.wait_counter.fetch_add(1, Ordering::Relaxed) + 1;
-        if(counter == NUM_TRADER_THREADS) {
-            self.wait_counter.store(0, Ordering::Relaxed);
-            for i in 0..(NUM_TRADER_THREADS - 1)  {
-                self.sender.send(Messages::Tick);
-            }
+        let my_age = *guard;
 
-            return Messages::Tick;
-
-        }
-
-        let result = self.receiver.recv();
-        match result {
-            Ok(_) => {
-                result.unwrap()
-            }
-            Err(_) => {
-                panic!("channel disconnected")
-            }
+        if (counter % NUM_TRADER_THREADS == 0) {
+            *guard = guard.wrapping_add(1);
+            self.cvar.notify_all()
+        } else {
+            // wait while terminates when false so when the age is advance
+            let mut guard = self
+                .cvar
+                .wait_while(guard, |wakeup| *wakeup == my_age && !SYSTEM_END.load(Ordering::Relaxed))
+                .unwrap();
         }
     }
-    pub fn signal_end(&self) {
-        for i in 0..NUM_TRADER_THREADS {
-            self.sender.send(Messages::End).unwrap();
-        }
 
+    pub fn shutdown(&self) {
+        let mut guard = self.lock.lock().unwrap();
+        SYSTEM_END.store(true, Ordering::Relaxed);
+        self.cvar.notify_all();
+        
     }
 }
