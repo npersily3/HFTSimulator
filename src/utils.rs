@@ -58,7 +58,6 @@ macro_rules! ASSERT {
     ($x:expr) => {};
 }
 
-
 pub struct TickBarrier {
     pub(crate) cvar: Condvar,
     lock: Mutex<usize>,
@@ -78,25 +77,27 @@ impl TickBarrier {
 
     pub fn wait(&self) {
         let mut guard = self.lock.lock().unwrap();
-        let counter = self.wait_counter.fetch_add(1, Ordering::Relaxed) + 1;
+        self.wait_counter.fetch_add(1, Ordering::SeqCst);
         let my_age = *guard;
 
-        if (counter % NUM_TRADER_THREADS == 0) {
-            *guard = guard.wrapping_add(1);
-            self.cvar.notify_all()
-        } else {
-            // wait while terminates when false so when the age is advance
-            let mut guard = self
-                .cvar
-                .wait_while(guard, |wakeup| *wakeup == my_age && !SYSTEM_END.load(Ordering::Relaxed))
-                .unwrap();
-        }
+        // wait while terminates when false so when the age is advance
+        let mut guard = self
+            .cvar
+            .wait_while(guard, |wakeup| {
+                *wakeup == my_age && !SYSTEM_END.load(Ordering::Relaxed)
+            })
+            .unwrap();
+    }
+    pub fn wake(&self) {
+        let mut guard = self.lock.lock().unwrap();
+        self.wait_counter.store(0, Ordering::SeqCst);
+        *guard += 1;
+        self.cvar.notify_all();
     }
 
     pub fn shutdown(&self) {
         let mut guard = self.lock.lock().unwrap();
         SYSTEM_END.store(true, Ordering::Relaxed);
         self.cvar.notify_all();
-        
     }
 }
