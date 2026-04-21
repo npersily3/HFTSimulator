@@ -61,7 +61,6 @@ macro_rules! ASSERT {
 pub struct TickBarrier {
     pub(crate) cvar: Condvar,
     lock: Mutex<usize>,
-
     pub(crate) wait_counter: AtomicUsize,
 }
 
@@ -76,13 +75,12 @@ impl TickBarrier {
     }
 
     pub fn wait(&self) {
-        let mut guard = self.lock.lock().unwrap();
+        let guard = self.lock.lock().unwrap();
         self.wait_counter.fetch_add(1, Ordering::SeqCst);
         let my_age = *guard;
 
         // wait while terminates when false so when the age is advance
-        let mut guard = self
-            .cvar
+        self.cvar
             .wait_while(guard, |wakeup| {
                 *wakeup == my_age && !SYSTEM_END.load(Ordering::Relaxed)
             })
