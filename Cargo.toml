@@ -3,6 +3,10 @@ name = "HFTSimulator"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+tick =[]
+time = []
+default = ["tick"]
 [profile.dev]
 debug = 2
 opt-level = 0

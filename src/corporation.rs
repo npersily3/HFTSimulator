@@ -1,9 +1,11 @@
 use crate::utils;
+use crate::utils::TickBarrier;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};
-use crate::utils::TickBarrier;
+
 
 pub const STARTING_PRICE: u64 = 1000;
+
 pub fn set_true_price(true_price: Arc<AtomicU64>, start: Arc<Barrier>, tick: Arc<TickBarrier>) {
     start.wait();
     //println!("started");
@@ -21,7 +23,13 @@ pub fn set_true_price(true_price: Arc<AtomicU64>, start: Arc<Barrier>, tick: Arc
             }
         }
 
-        //TODO add a mode where it is not tick based
-        tick.wait();
+        #[cfg(feature = "tick")]
+        {
+            tick.wait();
+        }
+        #[cfg(feature = "time")]
+        {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
     }
 }
