@@ -90,14 +90,14 @@ pub fn noise(sender: Sender<MarketOrder>, start: Arc<Barrier>, tick: Option<Arc<
             match exchange::ask(is_canceled.clone(), quantity, money.clone(), sender.clone()) {
                 Ok(_) => {}
                 Err(e) => {
-                    println!("order rejected")
+                //    println!("order rejected")
                 }
             }
         } else {
             match exchange::bid(is_canceled.clone(), quantity, money.clone(), sender.clone()) {
                 Ok(_) => {}
                 Err(e) => {
-                    println!("order rejected")
+                //    println!("order rejected")
                 }
             }
         }
@@ -120,7 +120,7 @@ pub fn noise(sender: Sender<MarketOrder>, start: Arc<Barrier>, tick: Option<Arc<
     let thread = std::thread::current();
     let name = thread.name().unwrap_or("<unnamed>");
     let final_money = money.load(Ordering::Relaxed);
-    println!("final_money: {} ({})", final_money, name);
+   // println!("final_money: {} ({})", final_money, name);
 }
 
 const THRESHOLD: i64 = 50;
@@ -138,7 +138,7 @@ pub fn fundamentalist(
 
     start.wait();
 
-    println!("money {}", money.load(Ordering::Relaxed));
+  //  println!("money {}", money.load(Ordering::Relaxed));
     loop {
         if utils::SYSTEM_END.load(Ordering::Relaxed) {
 
@@ -192,5 +192,5 @@ pub fn fundamentalist(
     let thread = std::thread::current();
     let name = thread.name().unwrap_or("<unnamed>");
 
-    println!("final money: {} in cents ({})", money.load(Ordering::Relaxed), name);
+   // println!("final money: {} in cents ({})", money.load(Ordering::Relaxed), name);
 }
