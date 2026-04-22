@@ -47,11 +47,13 @@ def read_output(proc):
 
 binary = sys.argv[1] if len(sys.argv) > 1 else r"target\debug\HFTSimulator.exe"
 proc = subprocess.Popen(
-    [binary],
+   
+    binary,          # string, not list
     stdout=subprocess.PIPE,
     stderr=subprocess.DEVNULL,
     text=True,
     bufsize=1,
+
 )
 
 reader = threading.Thread(target=read_output, args=(proc,), daemon=True)

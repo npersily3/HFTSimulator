@@ -43,7 +43,7 @@ macro_rules! ASSERT {
 }
 pub fn init() {
     std::panic::set_hook(Box::new(|info| {
-        println!("Panic: {info}");
+      //  println!("Panic: {info}");
         unsafe {
             core::arch::asm!("int3");
         }
