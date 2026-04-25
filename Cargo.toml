@@ -6,6 +6,7 @@ edition = "2024"
 [features]
 tick =[]
 time = []
+gui = ["tick"]
 default = ["tick"]
 [profile.dev]
 debug = 2

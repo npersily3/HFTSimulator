@@ -421,13 +421,17 @@ pub fn handle_orders(
                 }
             }
             Err(_) => {
-                let best_bid = order_book.lowest_bid_index.load(Ordering::Relaxed);
-                let best_ask = order_book.highest_ask_index.load(Ordering::Relaxed);
-                let mid = (best_bid + best_ask) / 2;
-                let true_p = true_price.load(Ordering::Relaxed);
-                let _ = writeln!(out, "TICK:{},{},{},{},{}", tick_num, best_bid, best_ask, mid, true_p);
-                let _ = out.flush();
-                tick_num += 1;
+                #[cfg(feature = "gui")]
+                {
+                    let best_bid = order_book.lowest_bid_index.load(Ordering::Relaxed);
+                    let best_ask = order_book.highest_ask_index.load(Ordering::Relaxed);
+                    let mid = (best_bid + best_ask) / 2;
+                    let true_p = true_price.load(Ordering::Relaxed);
+                    let _ = writeln!(out, "TICK:{},{},{},{},{}", tick_num, best_bid, best_ask, mid, true_p);
+                    let _ = out.flush();
+                    tick_num += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
                 tick.wake();
             }
         }
