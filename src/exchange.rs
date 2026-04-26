@@ -156,14 +156,14 @@ pub fn bid(
 }
 
 fn handle_ask(market_order: MarketOrder, order_book: &mut Book, history_book: &ArrayQueue<HistoryEntry>) {
-    let mut index = order_book.highest_bid_index.load(Ordering::Relaxed);
+    let mut index = order_book.lowest_bid_index.load(Ordering::Relaxed);
 
 
     //create local mutables of the order
 
     let mut price = 0;
     if market_order.price == 0 {
-         price = order_book.lowest_bid_index.load(Ordering::Relaxed);
+         price = order_book.highest_bid_index.load(Ordering::Relaxed);
     } else {
          price = market_order.price as usize;
     }
@@ -252,12 +252,12 @@ fn handle_ask(market_order: MarketOrder, order_book: &mut Book, history_book: &A
 }
 
 fn handle_bid(market_order: MarketOrder, order_book: &mut Book, history_book: &ArrayQueue<HistoryEntry>) {
-    let mut index = order_book.lowest_ask_index.load(Ordering::Relaxed);
+    let mut index = order_book.highest_ask_index.load(Ordering::Relaxed);
 
 
     let mut price = 0;
     if market_order.price == 0 {
-        price = order_book.highest_bid_index.load(Ordering::Relaxed);
+        price = order_book.lowest_ask_index.load(Ordering::Relaxed);
     } else {
         price = market_order.price as usize;
     }
@@ -430,7 +430,7 @@ pub fn handle_orders(
                     let _ = writeln!(out, "TICK:{},{},{},{},{}", tick_num, best_bid, best_ask, mid, true_p);
                     let _ = out.flush();
                     tick_num += 1;
-                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    //std::thread::sleep(std::time::Duration::from_millis(100));
                 }
                 tick.wake();
             }

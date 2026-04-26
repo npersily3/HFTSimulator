@@ -5,7 +5,7 @@ use std::sync::{Arc, Barrier};
 
 
 pub const STARTING_PRICE: u64 = 1000;
-
+const RANDOM_WALK: u64 = 20;
 pub fn set_true_price(true_price: Arc<AtomicU64>, start: Arc<Barrier>, tick: Arc<TickBarrier>) {
     start.wait();
     //println!("started");
@@ -16,10 +16,10 @@ pub fn set_true_price(true_price: Arc<AtomicU64>, start: Arc<Barrier>, tick: Arc
 
         match rand::random::<bool>() {
             true => {
-                true_price.fetch_sub(1, Ordering::Relaxed);
+                true_price.fetch_sub(RANDOM_WALK, Ordering::Relaxed);
             }
             false => {
-                true_price.fetch_add(1, Ordering::Relaxed);
+                true_price.fetch_add(RANDOM_WALK, Ordering::Relaxed);
             }
         }
 

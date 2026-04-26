@@ -65,10 +65,17 @@ reader.start()
 
 fig, (ax_price, ax_spread) = plt.subplots(2, 1, figsize=(11, 8), sharex=True)
 fig.suptitle("HFT Simulator", fontsize=13)
-plt.subplots_adjust(bottom=0.12)
+plt.subplots_adjust(bottom=0.17)
 
-ax_window = fig.add_axes([0.15, 0.03, 0.65, 0.025])
-window_slider = Slider(ax_window, "Window (ticks)", 10, MAX_POINTS, valinit=100, valstep=10, color="#90CAF9")
+# Window slider: how many ticks to display at once
+ax_window = fig.add_axes([0.15, 0.09, 0.65, 0.025])
+window_slider = Slider(ax_window, "Window", 10, MAX_POINTS, valinit=100, valstep=10, color="#90CAF9")
+ax_window.text(1.02, 0.5, "ticks", transform=ax_window.transAxes, va="center", fontsize=8)
+
+# Pan slider: 0 = live (most recent), positive = scroll back into history
+ax_pan = fig.add_axes([0.15, 0.04, 0.65, 0.025])
+pan_slider = Slider(ax_pan, "Pan", 0, MAX_POINTS, valinit=0, valstep=1, color="#FFCC80")
+ax_pan.text(1.02, 0.5, "← back", transform=ax_pan.transAxes, va="center", fontsize=8)
 
 
 def update(_frame):
@@ -80,8 +87,19 @@ def update(_frame):
         true = list(true_prices)
         spr  = list(spreads)
 
-    n = int(window_slider.val)
-    t, bid, ask, mid, true, spr = t[-n:], bid[-n:], ask[-n:], mid[-n:], true[-n:], spr[-n:]
+    n   = int(window_slider.val)
+    pan = int(pan_slider.val)
+    total = len(t)
+
+    # end is offset from the tail; clamp so we always have at least `n` points
+    end   = max(total - pan, n)
+    end   = min(end, total)
+    start = max(end - n, 0)
+
+    t, bid, ask, mid, true, spr = (
+        t[start:end], bid[start:end], ask[start:end],
+        mid[start:end], true[start:end], spr[start:end],
+    )
 
     ax_price.clear()
     ax_spread.clear()
@@ -104,7 +122,7 @@ def update(_frame):
 
 
 ani = animation.FuncAnimation(fig, update, interval=150, cache_frame_data=False)
-plt.tight_layout(rect=[0, 0.07, 1, 1])
+plt.tight_layout(rect=[0, 0.14, 1, 1])
 
 try:
     plt.show()

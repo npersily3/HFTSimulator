@@ -123,6 +123,8 @@ pub fn noise(sender: Sender<MarketOrder>, start: Arc<Barrier>, tick: Option<Arc<
    // println!("final_money: {} ({})", final_money, name);
 }
 
+
+const FUNDAMENTALIST_QUANTITY: u32 = 100;
 const THRESHOLD: i64 = 50;
 pub fn fundamentalist(
     sender: Sender<MarketOrder>,
@@ -154,9 +156,9 @@ pub fn fundamentalist(
             match mid_price > true_price {
                 true => {
                     exchange::limit_ask(
-                        true_price as u64,
+                        true_price.clamp(10,10000) as u64,
                         is_canceled.clone(),
-                        10,
+                        FUNDAMENTALIST_QUANTITY,
                         money.clone(),
                         sender.clone(),
                     )
@@ -164,9 +166,9 @@ pub fn fundamentalist(
                 }
                 false => {
                     exchange::limit_bid(
-                        true_price as u64,
+                        true_price.clamp(10,10000) as u64,
                         is_canceled.clone(),
-                        10,
+                        FUNDAMENTALIST_QUANTITY,
                         money.clone(),
                         sender.clone(),
                     )
