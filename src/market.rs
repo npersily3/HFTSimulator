@@ -196,3 +196,8 @@ pub fn fundamentalist(
 
    // println!("final money: {} in cents ({})", money.load(Ordering::Relaxed), name);
 }
+
+//growth trader
+
+
+//global macro strategy

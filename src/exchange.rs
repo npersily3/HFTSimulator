@@ -393,6 +393,7 @@ pub fn handle_orders(
 
     start.wait();
 
+
     let stdout = std::io::stdout();
     let mut out = std::io::BufWriter::new(stdout.lock());
     let mut tick_num: u64 = 0;
@@ -430,7 +431,7 @@ pub fn handle_orders(
                     let _ = writeln!(out, "TICK:{},{},{},{},{}", tick_num, best_bid, best_ask, mid, true_p);
                     let _ = out.flush();
                     tick_num += 1;
-                    //std::thread::sleep(std::time::Duration::from_millis(100));
+                    std::thread::sleep(std::time::Duration::from_millis(100));
                 }
                 tick.wake();
             }
