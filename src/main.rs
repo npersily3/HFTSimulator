@@ -123,7 +123,7 @@ fn main() {
 
     handles.push(handle);
 
-    sleep(Duration::from_secs(5));
+    sleep(Duration::from_secs(10));
 
     end.shutdown();
 

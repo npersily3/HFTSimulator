@@ -66,41 +66,44 @@ Two feature flags control timing:
 
 ## Visualization
 
-`frontend/visualizer.py` is a Python/matplotlib frontend that:
+The frontend is a browser-based dashboard served by a small Node.js bridge (`frontend/server.js`).
 
-1. Compiles the Rust binary with the `gui` feature
-2. Spawns it as a subprocess and reads its stdout
-3. Plots mid price, true price, bid-ask band, and spread in a live-updating window with pan and zoom sliders
+The bridge connects to the exchange's TCP tick stream and forwards each `TICK:` line to the browser over WebSocket. The browser renders two live Chart.js charts: mid price + true price + bid-ask band on top, bid-ask spread on the bottom.
 
-Run it directly:
-```bash
-python frontend/visualizer.py
 ```
-
-Requires: `matplotlib`
+Exchange (Rust, TCP :9000)  →  Bridge (Node.js, :8000)  →  Browser (WebSocket)
+```
 
 ---
 
 ## Running
 
-
-**Headless with Tick (no GUI output):**
+**Headless — no visualization:**
 ```bash
-cargo run --features tick
+# barrier-synchronized ticks (default)
+cargo run
+
+# real-time sleep-based ticks
+cargo run --no-default-features --features time
 ```
 
-**Headless with Real Time (no GUI output):**
+**With the web GUI locally (two terminals):**
 ```bash
-cargo run --features time
+# Terminal 1 — start the exchange; --features gui enables the TCP tick server on port 9000
+cargo run --features gui
+
+# Terminal 2 — start the bridge; it connects to localhost:9000 and serves the page
+cd frontend
+npm install   # only needed the first time
+node server.js
 ```
+Then open **http://localhost:8000** in your browser.
 
-
-**With Docker (in progress, do not run):**
+**With Docker (full stack):**
 ```bash
 docker compose up --build
 ```
-
-The `Dockerfile` uses a multi-stage Alpine build for a minimal release image. The `frontend/` directory has its own `Dockerfile` and `compose.yaml` for the Python visualizer.
+Then open **http://localhost:8000**. The exchange and bridge each run in their own container; Docker's internal DNS lets the bridge reach the exchange by the hostname `exchange`.
 
 ---
 

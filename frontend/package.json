@@ -1,0 +1,9 @@
+{
+  "name": "hft-bridge",
+  "version": "1.0.0",
+  "description": "WebSocket bridge between the HFT exchange and the browser",
+  "main": "server.js",
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
