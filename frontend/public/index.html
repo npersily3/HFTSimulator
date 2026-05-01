@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HFT Simulator</title>
+
+  <!-- Chart.js UMD bundle — includes the filler plugin needed for bid-ask band -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: sans-serif;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      padding: 20px;
+    }
+
+    h1 {
+      text-align: center;
+      font-size: 18px;
+      color: #90caf9;
+      margin-bottom: 16px;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      padding: 10px 16px;
+      background: #16213e;
+      border-radius: 6px;
+      margin-bottom: 14px;
+    }
+
+    .controls label { font-size: 13px; }
+    #window-slider { width: 180px; vertical-align: middle; }
+
+    /* Status pill in the top-right of the controls bar */
+    #status {
+      margin-left: auto;
+      font-size: 12px;
+      padding: 3px 10px;
+      border-radius: 4px;
+    }
+    #status.connected    { background: #1b5e20; }
+    #status.disconnected { background: #b71c1c; }
+
+    .chart-wrap {
+      background: #16213e;
+      border-radius: 6px;
+      padding: 14px;
+      margin-bottom: 12px;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>HFT Simulator</h1>
+
+  <div class="controls">
+    <label>
+      Window:&nbsp;
+      <input type="range" id="window-slider" min="10" max="500" value="100" step="10">
+      &nbsp;<span id="window-val">100</span> ticks
+    </label>
+    <span id="status" class="disconnected">disconnected</span>
+  </div>
+
+  <!-- Top chart: mid price, true price, bid-ask band -->
+  <div class="chart-wrap">
+    <canvas id="price-chart" height="280"></canvas>
+  </div>
+
+  <!-- Bottom chart: bid-ask spread -->
+  <div class="chart-wrap">
+    <canvas id="spread-chart" height="140"></canvas>
+  </div>
+
+  <script>
+    // ── Rolling buffer ────────────────────────────────────────────────────────
+    // Equivalent to Python's collections.deque(maxlen=N).
+    // push() adds a value and discards the oldest one once the buffer is full.
+    // tail(n) returns the most recent n values as a plain array.
+    class RingBuffer {
+      constructor(max) {
+        this._max  = max;
+        this._data = [];
+      }
+      push(v) {
+        this._data.push(v);
+        if (this._data.length > this._max) this._data.shift();
+      }
+      tail(n) { return this._data.slice(-n); }
+    }
+
+    const MAX = 500; // matches the exchange's rolling window
+
+    const tickBuf   = new RingBuffer(MAX);
+    const bidBuf    = new RingBuffer(MAX);
+    const askBuf    = new RingBuffer(MAX);
+    const midBuf    = new RingBuffer(MAX);
+    const trueBuf   = new RingBuffer(MAX);
+    const spreadBuf = new RingBuffer(MAX);
+
+    // ── Shared chart options ──────────────────────────────────────────────────
+    const axisStyle = { ticks: { color: '#9e9e9e' }, grid: { color: '#2a2a4a' } };
+
+    const baseOptions = {
+      animation: false,  // disable per-update animation — too slow for live data
+      responsive: true,
+      plugins: {
+        legend: { labels: { color: '#e0e0e0', boxWidth: 12, font: { size: 11 } } },
+      },
+      scales: {
+        x: { ...axisStyle, ticks: { ...axisStyle.ticks, maxTicksLimit: 10 } },
+        y: { ...axisStyle },
+      },
+    };
+
+    // ── Price chart ───────────────────────────────────────────────────────────
+    // Four datasets:
+    //   [0] mid price  — solid blue line
+    //   [1] true price — dashed orange line
+    //   [2] ask        — invisible top edge of the bid-ask band
+    //   [3] bid        — invisible bottom edge; dataset[2] fills DOWN to this
+    const priceChart = new Chart(document.getElementById('price-chart'), {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [
+          {
+            label: 'Mid price',
+            data: [],
+            borderColor: '#2196f3',
+            borderWidth: 2,
+            pointRadius: 0,  // hide dots — too cluttered at 500 points
+            fill: false,
+          },
+          {
+            label: 'True price',
+            data: [],
+            borderColor: '#ff9800',
+            borderWidth: 2,
+            borderDash: [6, 3], // dashed line, same as matplotlib's linestyle='--'
+            pointRadius: 0,
+            fill: false,
+          },
+          {
+            // Ask is the TOP edge of the shaded bid-ask band.
+            // fill: '+1' tells Chart.js to shade the area between this dataset
+            // and the NEXT one (bid), creating the green band.
+            label: 'Ask',
+            data: [],
+            borderColor: 'transparent',         // hide the line itself
+            backgroundColor: 'rgba(76,175,80,0.15)', // green band fill colour
+            pointRadius: 0,
+            fill: '+1',
+          },
+          {
+            // Bid is the BOTTOM edge of the band — no fill of its own.
+            label: 'Bid',
+            data: [],
+            borderColor: 'transparent',
+            pointRadius: 0,
+            fill: false,
+          },
+        ],
+      },
+      options: {
+        ...baseOptions,
+        scales: {
+          ...baseOptions.scales,
+          y: { ...axisStyle, title: { display: true, text: 'Price', color: '#9e9e9e' } },
+        },
+      },
+    });
+
+    // ── Spread chart ──────────────────────────────────────────────────────────
+    const spreadChart = new Chart(document.getElementById('spread-chart'), {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [{
+          label: 'Bid-ask spread',
+          data: [],
+          borderColor: '#e91e63',
+          borderWidth: 1.5,
+          pointRadius: 0,
+          fill: false,
+        }],
+      },
+      options: {
+        ...baseOptions,
+        scales: {
+          ...baseOptions.scales,
+          y: { ...axisStyle, title: { display: true, text: 'Spread (ticks)', color: '#9e9e9e' } },
+        },
+      },
+    });
+
+    // ── Window slider ─────────────────────────────────────────────────────────
+    const slider     = document.getElementById('window-slider');
+    const windowVal  = document.getElementById('window-val');
+
+    slider.addEventListener('input', () => {
+      windowVal.textContent = slider.value;
+      redraw();
+    });
+
+    // ── Redraw ────────────────────────────────────────────────────────────────
+    // Slices the most recent `window` ticks out of each buffer and pushes them
+    // into the chart datasets, then tells Chart.js to re-render.
+    function redraw() {
+      const n = Number(slider.value);
+      const labels = tickBuf.tail(n);
+
+      priceChart.data.labels           = labels;
+      priceChart.data.datasets[0].data = midBuf.tail(n);
+      priceChart.data.datasets[1].data = trueBuf.tail(n);
+      priceChart.data.datasets[2].data = askBuf.tail(n);
+      priceChart.data.datasets[3].data = bidBuf.tail(n);
+      priceChart.update('none'); // 'none' skips Chart.js's built-in transition
+
+      spreadChart.data.labels           = labels;
+      spreadChart.data.datasets[0].data = spreadBuf.tail(n);
+      spreadChart.update('none');
+    }
+
+    // ── WebSocket connection ──────────────────────────────────────────────────
+    // `window.location.host` is whatever host:port the page was loaded from,
+    // so this works whether you open localhost:8000 or a real domain name.
+    const statusEl = document.getElementById('status');
+
+    function connect() {
+      const ws = new WebSocket(`ws://${window.location.host}`);
+
+      ws.onopen = () => {
+        statusEl.textContent = 'connected';
+        statusEl.className   = 'connected';
+      };
+
+      ws.onmessage = ({ data }) => {
+        // Protocol: "TICK:<tick>,<bid>,<ask>,<mid>,<true_price>"
+        if (!data.startsWith('TICK:')) return;
+        const parts = data.slice(5).split(',').map(Number);
+        if (parts.length !== 5 || parts.some(isNaN)) return;
+
+        const [tick_n, bid, ask, mid, true_p] = parts;
+
+        tickBuf.push(tick_n);
+        bidBuf.push(bid);
+        askBuf.push(ask);
+        midBuf.push(mid);
+        trueBuf.push(true_p);
+        spreadBuf.push(ask - bid);
+
+        redraw();
+      };
+
+      ws.onclose = () => {
+        statusEl.textContent = 'disconnected — reconnecting…';
+        statusEl.className   = 'disconnected';
+        // Mirror the bridge's 2 s retry so they come back in sync
+        setTimeout(connect, 2000);
+      };
+
+      // Let onclose handle the retry — no duplicate logic needed
+      ws.onerror = () => ws.close();
+    }
+
+    connect();
+  </script>
+</body>
+</html>

@@ -10,6 +10,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, LazyLock};
 use std::time::Instant;
 use std::io::Write;
+
+// Only needed when the "gui" feature is on — without it, no TCP code is compiled.
+#[cfg(feature = "gui")]
+use std::net::TcpListener;
 // A file containing the implementation
 
 #[derive(Debug)]
@@ -391,11 +395,28 @@ pub fn handle_orders(
 ) {
     init_exchange(&mut order_book);
 
+    // Wait for the visualizer to connect before unblocking the other threads.
+    // This means no ticks are produced before anyone is ready to receive them.
+    //
+    // accept() blocks here until one client connects, then returns a TcpStream
+    // we can write to.  The exchange doesn't need to know or care how many
+    // clients exist — it just writes and moves on.
+    #[cfg(feature = "gui")]
+    let mut stream = {
+        // Binding to 0.0.0.0 accepts connections on all network interfaces,
+        // which is required for Docker: 127.0.0.1 (loopback) would only be
+        // reachable from inside the same container.
+        let listener = TcpListener::bind(("0.0.0.0", 9000))
+            .expect("exchange: failed to bind TCP listener on port 9000");
+        eprintln!("[exchange] waiting for visualizer on port 9000 …");
+        let (stream, addr) = listener.accept()
+            .expect("exchange: accept failed");
+        eprintln!("[exchange] visualizer connected from {addr}");
+        stream
+    };
+
     start.wait();
 
-
-    let stdout = std::io::stdout();
-    let mut out = std::io::BufWriter::new(stdout.lock());
     let mut tick_num: u64 = 0;
 
     loop {
@@ -428,8 +449,11 @@ pub fn handle_orders(
                     let best_ask = order_book.highest_ask_index.load(Ordering::Relaxed);
                     let mid = (best_bid + best_ask) / 2;
                     let true_p = true_price.load(Ordering::Relaxed);
-                    let _ = writeln!(out, "TICK:{},{},{},{},{}", tick_num, best_bid, best_ask, mid, true_p);
-                    let _ = out.flush();
+                    // Write the tick to the stream and ignore any error.
+                    // The exchange doesn't need to guarantee delivery — if the
+                    // visualizer disconnects, we just keep running.
+                    let msg = format!("TICK:{},{},{},{},{}\n", tick_num, best_bid, best_ask, mid, true_p);
+                    let _ = stream.write_all(msg.as_bytes());
                     tick_num += 1;
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 }

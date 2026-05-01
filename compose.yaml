@@ -1,0 +1,60 @@
+# Docker Compose file for the HFT Simulator.
+#
+# HOW DOCKER COMPOSE NETWORKING WORKS (short primer):
+#   Compose automatically creates a private virtual network and connects every
+#   service to it.  Each service is reachable from the others using its service
+#   name as a hostname — so the frontend can reach the exchange at host
+#   "exchange" without knowing its actual IP address.
+#
+# To start the full stack:
+#   docker compose up --build
+#
+# To start only the exchange (useful when running the visualizer locally):
+#   docker compose up --build exchange
+
+services:
+
+  # ── exchange ────────────────────────────────────────────────────────────────
+  # The Rust order-matching engine.
+  # When it starts it:
+  #   1. Seeds the order book and starts the simulated trader threads.
+  #   2. Opens a TCP listener on port 9000.
+  #   3. Broadcasts one "TICK:..." line per tick to every connected client.
+  exchange:
+    build:
+      context: .            # tells Docker where to find the Dockerfile
+      dockerfile: Dockerfile
+    ports:
+      # "host_port:container_port" — maps the container's 9000 to your machine's 9000.
+      # This lets you also connect a *locally* running visualizer to the exchange
+      # without going through Docker networking (just use EXCHANGE_HOST=localhost).
+      - "9000:9000"
+
+  # ── frontend ────────────────────────────────────────────────────────────────
+  # The Python matplotlib visualizer.
+  # It connects to the exchange via TCP, reads the TICK stream, and draws charts.
+  #
+  # ⚠ DISPLAY NOTE:
+  #   matplotlib needs a display (screen) to show its GUI window.
+  #   If you run this container on a headless server you have two options:
+  #     a) Run the visualizer on your *local* machine instead of in Docker
+  #        (it will connect to exchange via the mapped port 9000 above).
+  #     b) Forward your X11 display into the container
+  #        (add `DISPLAY` to the environment block and mount /tmp/.X11-unix).
+  frontend:
+    build:
+      context: ./frontend   # Dockerfile is inside the frontend/ subdirectory
+      dockerfile: Dockerfile
+    depends_on:
+      - exchange            # Compose starts exchange first.
+                            # The visualizer also retries the TCP connect, so a
+                            # brief race between startup and the listener being
+                            # ready is handled gracefully.
+    environment:
+      # These variables tell visualizer.py where to find the exchange service.
+      # "exchange" resolves to the exchange container via Docker's built-in DNS.
+      - EXCHANGE_HOST=exchange
+      - EXCHANGE_PORT=9000
+    ports:
+      # Reserved for a future web-based front end; not used by visualizer.py today.
+      - "8000:8000"
