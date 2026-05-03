@@ -455,7 +455,7 @@ pub fn handle_orders(
                     let msg = format!("TICK:{},{},{},{},{}\n", tick_num, best_bid, best_ask, mid, true_p);
                     let _ = stream.write_all(msg.as_bytes());
                     tick_num += 1;
-                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    std::thread::sleep(std::time::Duration::from_millis(1));
                 }
                 tick.wake();
             }

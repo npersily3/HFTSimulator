@@ -136,8 +136,9 @@ pub fn fundamentalist(
 ) {
     let money = Arc::new(AtomicU64::new(INITIAL_MONEY));
 
-    let is_canceled = Arc::new(AtomicBool::new(false));
 
+
+    let mut last_is_canceled: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
     start.wait();
 
   //  println!("money {}", money.load(Ordering::Relaxed));
@@ -146,6 +147,11 @@ pub fn fundamentalist(
 
             break;
         }
+
+        let is_canceled = Arc::new(AtomicBool::new(false));
+
+        // cancel the previous order
+        last_is_canceled.store(true, Ordering::Relaxed);
 
         let mid_price =
             ((ask_index.load(Ordering::Relaxed) + bid_index.load(Ordering::Relaxed)) / 2) as i64;
@@ -176,6 +182,8 @@ pub fn fundamentalist(
                 }
             }
         }
+
+        last_is_canceled = is_canceled.clone();
 
         match tick.as_ref() {
             Some(tick) => {
