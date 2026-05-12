@@ -3,7 +3,6 @@ use crate::utils::TickBarrier;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};
 
-
 pub const STARTING_PRICE: u64 = 1000;
 const RANDOM_WALK: u64 = 20;
 pub fn set_true_price(true_price: Arc<AtomicU64>, start: Arc<Barrier>, tick: Arc<TickBarrier>) {
@@ -24,12 +23,9 @@ pub fn set_true_price(true_price: Arc<AtomicU64>, start: Arc<Barrier>, tick: Arc
         }
 
         #[cfg(feature = "tick")]
-        {
-            tick.wait();
-        }
+        tick.wait();
+
         #[cfg(feature = "time")]
-        {
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
     }
 }

@@ -110,7 +110,6 @@ Then open **http://localhost:8000**. The exchange and bridge each run in their o
 ## Roadmap
 
 - [ ] Personal strategy layer (Layer 3) — implement a basic market-making or momentum strategy
-- [ ] Order cancellation — allow traders to cancel resting orders
 - [ ] Trade history — re-enable the `HistoryEntry` ring buffer and expose it via the visualizer
 - [ ] GPU acceleration — port the participant simulation (especially noise traders) to run on the GPU using CUDA or wgpu
 - [ ] Cloud deployment — run the exchange and market layers on separate machines communicating over the network via Docker Swarm or Kubernetes

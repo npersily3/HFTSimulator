@@ -1,19 +1,20 @@
-use crate::{DebugBreak, NUM_TRADER_THREADS};
-use crate::utils;
-use crate::utils::{TickBarrier, ASSERT};
 use crate::corporation;
+use crate::utils;
+use crate::utils::{ASSERT, TickBarrier};
+use crate::{DebugBreak, NUM_TRADER_THREADS};
 use crossbeam::channel::{Receiver, SendError, Sender};
 use crossbeam::queue::ArrayQueue;
 use std::collections::VecDeque;
 use std::fmt;
+use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, LazyLock};
-use std::time::Instant;
-use std::io::Write;
+use std::time::{Duration, Instant};
 
 // Only needed when the "gui" feature is on — without it, no TCP code is compiled.
 #[cfg(feature = "gui")]
 use std::net::TcpListener;
+use std::thread::sleep;
 // A file containing the implementation
 
 #[derive(Debug)]
@@ -49,7 +50,6 @@ pub struct HistoryEntry {
 }
 const HISTORY_SIZE: usize = 1 << 15;
 
-
 struct QueueEntry {
     is_canceled: Arc<AtomicBool>,
     quantity: u32,
@@ -82,7 +82,12 @@ pub struct Book {
 }
 impl Book {
     //TODO
-    pub(crate) fn new(highest_ask_index: Arc<AtomicUsize>, lowest_ask_index: Arc<AtomicUsize>, highest_bid_index: Arc<AtomicUsize>, lowest_bid_index: Arc<AtomicUsize>) -> Book {
+    pub(crate) fn new(
+        highest_ask_index: Arc<AtomicUsize>,
+        lowest_ask_index: Arc<AtomicUsize>,
+        highest_bid_index: Arc<AtomicUsize>,
+        lowest_bid_index: Arc<AtomicUsize>,
+    ) -> Book {
         let table: Vec<BookEntry> = (0..BOOK_SIZE).map(|_| BookEntry::new()).collect();
 
         let book = Book {
@@ -159,17 +164,20 @@ pub fn bid(
     limit_bid(0, is_canceled, quantity, money_address, sender)
 }
 
-fn handle_ask(market_order: MarketOrder, order_book: &mut Book, history_book: &ArrayQueue<HistoryEntry>) {
+fn handle_ask(
+    market_order: MarketOrder,
+    order_book: &mut Book,
+    history_book: &ArrayQueue<HistoryEntry>,
+) {
     let mut index = order_book.lowest_bid_index.load(Ordering::Relaxed);
-
 
     //create local mutables of the order
 
     let mut price = 0;
     if market_order.price == 0 {
-         price = order_book.highest_bid_index.load(Ordering::Relaxed);
+        price = order_book.highest_bid_index.load(Ordering::Relaxed);
     } else {
-         price = market_order.price as usize;
+        price = market_order.price as usize;
     }
 
     let mut ask_quantity = market_order.quantity;
@@ -190,7 +198,11 @@ fn handle_ask(market_order: MarketOrder, order_book: &mut Book, history_book: &A
             }
 
             let ask_is_smaller = current_bid.quantity > ask_quantity;
-            let trade_quantity = if ask_is_smaller { ask_quantity } else { current_bid.quantity };
+            let trade_quantity = if ask_is_smaller {
+                ask_quantity
+            } else {
+                current_bid.quantity
+            };
             let money_difference = trade_quantity as u64 * index as u64;
 
             if money_difference > current_bid.money_address.load(Ordering::Relaxed) {
@@ -203,8 +215,12 @@ fn handle_ask(market_order: MarketOrder, order_book: &mut Book, history_book: &A
                 ask_quantity -= current_bid.quantity;
             }
 
-            market_order.money_address.fetch_add(money_difference, Ordering::Relaxed);
-            current_bid.money_address.fetch_sub(money_difference, Ordering::Relaxed);
+            market_order
+                .money_address
+                .fetch_add(money_difference, Ordering::Relaxed);
+            current_bid
+                .money_address
+                .fetch_sub(money_difference, Ordering::Relaxed);
 
             let record = HistoryEntry {
                 order_type: OrderType::Ask,
@@ -255,9 +271,12 @@ fn handle_ask(market_order: MarketOrder, order_book: &mut Book, history_book: &A
     }
 }
 
-fn handle_bid(market_order: MarketOrder, order_book: &mut Book, history_book: &ArrayQueue<HistoryEntry>) {
+fn handle_bid(
+    market_order: MarketOrder,
+    order_book: &mut Book,
+    history_book: &ArrayQueue<HistoryEntry>,
+) {
     let mut index = order_book.highest_ask_index.load(Ordering::Relaxed);
-
 
     let mut price = 0;
     if market_order.price == 0 {
@@ -269,7 +288,6 @@ fn handle_bid(market_order: MarketOrder, order_book: &mut Book, history_book: &A
     //create local mutables of the order
 
     let mut bid_quantity = market_order.quantity;
-
 
     //traversing from the lowest to highest ask we are willing to go to
     while price >= index {
@@ -286,7 +304,11 @@ fn handle_bid(market_order: MarketOrder, order_book: &mut Book, history_book: &A
             }
 
             let bid_is_smaller = current_ask.quantity > bid_quantity;
-            let trade_quantity = if bid_is_smaller { bid_quantity } else { current_ask.quantity };
+            let trade_quantity = if bid_is_smaller {
+                bid_quantity
+            } else {
+                current_ask.quantity
+            };
             let money_difference = trade_quantity as u64 * index as u64;
 
             if market_order.money_address.load(Ordering::Relaxed) < money_difference {
@@ -299,8 +321,12 @@ fn handle_bid(market_order: MarketOrder, order_book: &mut Book, history_book: &A
                 bid_quantity -= current_ask.quantity;
             }
 
-            market_order.money_address.fetch_sub(money_difference, Ordering::Relaxed);
-            current_ask.money_address.fetch_add(money_difference, Ordering::Relaxed);
+            market_order
+                .money_address
+                .fetch_sub(money_difference, Ordering::Relaxed);
+            current_ask
+                .money_address
+                .fetch_add(money_difference, Ordering::Relaxed);
 
             let record = HistoryEntry {
                 order_type: OrderType::Bid,
@@ -362,8 +388,10 @@ fn init_exchange(book: &mut Book) {
     book.lowest_bid_index.store(mid - 1, Ordering::Relaxed);
 
     // outer edges of the seeded range
-    book.lowest_ask_index.store(mid + INIT_RADIUS, Ordering::Relaxed);
-    book.highest_bid_index.store(mid - INIT_RADIUS, Ordering::Relaxed);
+    book.lowest_ask_index
+        .store(mid + INIT_RADIUS, Ordering::Relaxed);
+    book.highest_bid_index
+        .store(mid - INIT_RADIUS, Ordering::Relaxed);
 
     // seed asks from mid+1 up to mid+INIT_RADIUS
     for price in (mid + 1)..=(mid + INIT_RADIUS) {
@@ -409,8 +437,7 @@ pub fn handle_orders(
         let listener = TcpListener::bind(("0.0.0.0", 9000))
             .expect("exchange: failed to bind TCP listener on port 9000");
         eprintln!("[exchange] waiting for visualizer on port 9000 …");
-        let (stream, addr) = listener.accept()
-            .expect("exchange: accept failed");
+        let (stream, addr) = listener.accept().expect("exchange: accept failed");
         eprintln!("[exchange] visualizer connected from {addr}");
         stream
     };
@@ -420,6 +447,8 @@ pub fn handle_orders(
     let mut tick_num: u64 = 0;
 
     loop {
+        // in tick mode wait for all orders to be complete or system end
+        #[cfg(feature = "tick")]
         loop {
             if utils::SYSTEM_END.load(Ordering::Relaxed) {
                 return;
@@ -428,21 +457,24 @@ pub fn handle_orders(
                 break;
             }
         }
+        #[cfg(feature = "time")]
+        if utils::SYSTEM_END.load(Ordering::Relaxed) {
+            return;
+        }
 
         let market_order = receiver.try_recv();
 
         match market_order {
-            Ok(market_order) => {
-                match market_order.order_type {
-                    OrderType::Ask => {
-                        handle_ask(market_order, &mut order_book, &history_book);
-                    }
-                    OrderType::Bid => {
-                        handle_bid(market_order, &mut order_book, &history_book);
-                    }
+            Ok(market_order) => match market_order.order_type {
+                OrderType::Ask => {
+                    handle_ask(market_order, &mut order_book, &history_book);
                 }
-            }
+                OrderType::Bid => {
+                    handle_bid(market_order, &mut order_book, &history_book);
+                }
+            },
             Err(_) => {
+                // After every tick in write out things to gui tcpSocket
                 #[cfg(feature = "gui")]
                 {
                     let best_bid = order_book.lowest_bid_index.load(Ordering::Relaxed);
@@ -452,12 +484,21 @@ pub fn handle_orders(
                     // Write the tick to the stream and ignore any error.
                     // The exchange doesn't need to guarantee delivery — if the
                     // visualizer disconnects, we just keep running.
-                    let msg = format!("TICK:{},{},{},{},{}\n", tick_num, best_bid, best_ask, mid, true_p);
+                    let msg = format!(
+                        "TICK:{},{},{},{},{}\n",
+                        tick_num, best_bid, best_ask, mid, true_p
+                    );
                     let _ = stream.write_all(msg.as_bytes());
                     tick_num += 1;
-                    std::thread::sleep(std::time::Duration::from_millis(1));
+
                 }
+
+                // if I have fulfilled all orders wakeup all threads
+                #[cfg(feature = "tick")]
                 tick.wake();
+
+                #[cfg(feature = "time")]
+                sleep(Duration::from_millis(1));
             }
         }
     }

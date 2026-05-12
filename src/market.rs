@@ -1,16 +1,15 @@
-
-use crate::exchange::{ MarketOrder};
+use crate::exchange::MarketOrder;
+use crate::utils::{ASSERT, SYSTEM_END, TickBarrier};
 use crate::{exchange, utils};
 use crossbeam::channel::Sender;
 use rand::distr::Distribution;
 use rand::prelude::*;
 use rand::rngs::ThreadRng;
-use rand_distr::{ Exp1, LogNormal};
+use rand_distr::{Exp1, LogNormal};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 use std::thread::sleep;
 use std::time::Duration;
-use crate::utils::{TickBarrier, ASSERT, SYSTEM_END};
 
 pub const INITIAL_MONEY: u64 = 1000000;
 
@@ -69,18 +68,15 @@ pub fn noise(sender: Sender<MarketOrder>, start: Arc<Barrier>, tick: Option<Arc<
 
     loop {
         if utils::SYSTEM_END.load(Ordering::Relaxed) {
-
             break;
         }
 
-        match tick.as_ref() {
-            Some(tick) => {
-                if rand::random::<f64>() < ORDER_PROBABILITY {
-                    continue;
-                }
-            }
-            None => {}
-        }
+        // #[cfg(feature = "time")]
+        // {
+        //     if rand::random::<f64>() < ORDER_PROBABILITY {
+        //         continue;
+        //     }
+        // }
 
         let quantity = quantity_sampler.sample();
 
@@ -90,39 +86,34 @@ pub fn noise(sender: Sender<MarketOrder>, start: Arc<Barrier>, tick: Option<Arc<
             match exchange::ask(is_canceled.clone(), quantity, money.clone(), sender.clone()) {
                 Ok(_) => {}
                 Err(e) => {
-                //    println!("order rejected")
+                    //    println!("order rejected")
                 }
             }
         } else {
             match exchange::bid(is_canceled.clone(), quantity, money.clone(), sender.clone()) {
                 Ok(_) => {}
                 Err(e) => {
-                //    println!("order rejected")
+                    //    println!("order rejected")
                 }
             }
         }
-        match tick.as_ref() {
-            Some(tick) => {
-                tick.wait();
-                if utils::SYSTEM_END.load(Ordering::Relaxed) {
-
-                    break;
-                }
-
-            }
-            None => {
-                let duration = sleep_sampler.sample() as u64;
-                sleep(Duration::from_millis(duration));
+        #[cfg(feature = "tick")]
+        {
+            tick.wait();
+            if (crate::utils::SYSTEM_END.load(Ordering::Relaxed)) {
+                break;
             }
         }
+
+        #[cfg(feature = "time")]
+        sleep(Duration::from_millis(2));
     }
 
     let thread = std::thread::current();
     let name = thread.name().unwrap_or("<unnamed>");
     let final_money = money.load(Ordering::Relaxed);
-   // println!("final_money: {} ({})", final_money, name);
+    // println!("final_money: {} ({})", final_money, name);
 }
-
 
 const FUNDAMENTALIST_QUANTITY: u32 = 100;
 const THRESHOLD: i64 = 50;
@@ -136,15 +127,12 @@ pub fn fundamentalist(
 ) {
     let money = Arc::new(AtomicU64::new(INITIAL_MONEY));
 
-
-
     let mut last_is_canceled: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
     start.wait();
 
-  //  println!("money {}", money.load(Ordering::Relaxed));
+    //  println!("money {}", money.load(Ordering::Relaxed));
     loop {
         if utils::SYSTEM_END.load(Ordering::Relaxed) {
-
             break;
         }
 
@@ -162,7 +150,7 @@ pub fn fundamentalist(
             match mid_price > true_price {
                 true => {
                     exchange::limit_ask(
-                        true_price.clamp(10,10000) as u64,
+                        true_price.clamp(10, 10000) as u64,
                         is_canceled.clone(),
                         FUNDAMENTALIST_QUANTITY,
                         money.clone(),
@@ -172,7 +160,7 @@ pub fn fundamentalist(
                 }
                 false => {
                     exchange::limit_bid(
-                        true_price.clamp(10,10000) as u64,
+                        true_price.clamp(10, 10000) as u64,
                         is_canceled.clone(),
                         FUNDAMENTALIST_QUANTITY,
                         money.clone(),
@@ -185,27 +173,24 @@ pub fn fundamentalist(
 
         last_is_canceled = is_canceled.clone();
 
-        match tick.as_ref() {
-            Some(tick) => {
-
-                tick.wait();
-                if(SYSTEM_END.load(Ordering::Relaxed)) {
-                    break;
-                }
-            }
-            None => {
-                sleep(Duration::from_millis(200));
+        #[cfg(feature = "tick")]
+        {
+            tick.wait();
+            if (crate::utils::SYSTEM_END.load(Ordering::Relaxed)) {
+                break;
             }
         }
+
+        #[cfg(feature = "time")]
+        sleep(Duration::from_millis(1));
     }
 
     let thread = std::thread::current();
     let name = thread.name().unwrap_or("<unnamed>");
 
-   // println!("final money: {} in cents ({})", money.load(Ordering::Relaxed), name);
+    // println!("final money: {} in cents ({})", money.load(Ordering::Relaxed), name);
 }
 
 //growth trader
-
 
 //global macro strategy

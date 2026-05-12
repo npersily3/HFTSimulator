@@ -5,8 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>HFT Simulator</title>
 
-  <!-- Chart.js UMD bundle — includes the filler plugin needed for bid-ask band -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <!-- Hammer.js required by chartjs-plugin-zoom for touch/pinch support -->
+  <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
 
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -32,13 +34,12 @@
       padding: 10px 16px;
       background: #16213e;
       border-radius: 6px;
-      margin-bottom: 14px;
+      margin-bottom: 6px;
     }
 
     .controls label { font-size: 13px; }
     #window-slider { width: 180px; vertical-align: middle; }
 
-    /* Status pill in the top-right of the controls bar */
     #status {
       margin-left: auto;
       font-size: 12px;
@@ -48,12 +49,38 @@
     #status.connected    { background: #1b5e20; }
     #status.disconnected { background: #b71c1c; }
 
+    /* "Back to Live" button — shown only while exploring (zoomed/panned) */
+    #live-btn {
+      display: none;
+      background: #ff9800;
+      color: #1a1a2e;
+      border: none;
+      border-radius: 4px;
+      padding: 4px 12px;
+      font-size: 12px;
+      font-weight: bold;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    #live-btn:hover { background: #ffc107; }
+
+    .hint {
+      font-size: 11px;
+      color: #555e7a;
+      margin-bottom: 10px;
+      padding-left: 2px;
+    }
+
     .chart-wrap {
       background: #16213e;
       border-radius: 6px;
       padding: 14px;
       margin-bottom: 12px;
     }
+
+    /* Show grab cursor to hint at panning */
+    .chart-wrap canvas { cursor: grab; }
+    .chart-wrap canvas:active { cursor: grabbing; }
   </style>
 </head>
 <body>
@@ -66,24 +93,22 @@
       <input type="range" id="window-slider" min="10" max="500" value="100" step="10">
       &nbsp;<span id="window-val">100</span> ticks
     </label>
+    <button id="live-btn">&#8617; Back to Live</button>
     <span id="status" class="disconnected">disconnected</span>
   </div>
 
-  <!-- Top chart: mid price, true price, bid-ask band -->
+  <p class="hint">Scroll to zoom &middot; Drag to pan &middot; Double-click or &#8617; to return to live</p>
+
   <div class="chart-wrap">
     <canvas id="price-chart" height="280"></canvas>
   </div>
 
-  <!-- Bottom chart: bid-ask spread -->
   <div class="chart-wrap">
     <canvas id="spread-chart" height="140"></canvas>
   </div>
 
   <script>
     // ── Rolling buffer ────────────────────────────────────────────────────────
-    // Equivalent to Python's collections.deque(maxlen=N).
-    // push() adds a value and discards the oldest one once the buffer is full.
-    // tail(n) returns the most recent n values as a plain array.
     class RingBuffer {
       constructor(max) {
         this._max  = max;
@@ -96,7 +121,7 @@
       tail(n) { return this._data.slice(-n); }
     }
 
-    const MAX = 500; // matches the exchange's rolling window
+    const MAX = 500;
 
     const tickBuf   = new RingBuffer(MAX);
     const bidBuf    = new RingBuffer(MAX);
@@ -105,14 +130,47 @@
     const trueBuf   = new RingBuffer(MAX);
     const spreadBuf = new RingBuffer(MAX);
 
+    // ── Live-mode flag ────────────────────────────────────────────────────────
+    // When the user zooms or pans we freeze live updates so the viewport stays
+    // stable. The ring buffers keep filling in the background; clicking
+    // "Back to Live" resets zoom and shows the latest data.
+    let liveMode = true;
+    const liveBtnEl = document.getElementById('live-btn');
+
+    function setLiveMode(isLive) {
+      liveMode = isLive;
+      liveBtnEl.style.display = isLive ? 'none' : 'inline-block';
+    }
+
+    // ── Zoom/pan callback (shared by both charts) ─────────────────────────────
+    const onInteract = () => setLiveMode(false);
+
     // ── Shared chart options ──────────────────────────────────────────────────
     const axisStyle = { ticks: { color: '#9e9e9e' }, grid: { color: '#2a2a4a' } };
 
     const baseOptions = {
-      animation: false,  // disable per-update animation — too slow for live data
+      animation: false,
       responsive: true,
       plugins: {
         legend: { labels: { color: '#e0e0e0', boxWidth: 12, font: { size: 11 } } },
+        zoom: {
+          pan: {
+            enabled: true,
+            mode: 'xy',
+            onPanComplete: onInteract,
+          },
+          zoom: {
+            wheel: { enabled: true, speed: 0.08 },
+            pinch: { enabled: true },
+            mode: 'xy',
+            onZoomComplete: onInteract,
+          },
+          // Don't allow panning/zooming beyond the original data range
+          limits: {
+            x: { min: 'original', max: 'original', minRange: 5 },
+            y: { min: 'original', max: 'original' },
+          },
+        },
       },
       scales: {
         x: { ...axisStyle, ticks: { ...axisStyle.ticks, maxTicksLimit: 10 } },
@@ -121,11 +179,6 @@
     };
 
     // ── Price chart ───────────────────────────────────────────────────────────
-    // Four datasets:
-    //   [0] mid price  — solid blue line
-    //   [1] true price — dashed orange line
-    //   [2] ask        — invisible top edge of the bid-ask band
-    //   [3] bid        — invisible bottom edge; dataset[2] fills DOWN to this
     const priceChart = new Chart(document.getElementById('price-chart'), {
       type: 'line',
       data: {
@@ -136,7 +189,7 @@
             data: [],
             borderColor: '#2196f3',
             borderWidth: 2,
-            pointRadius: 0,  // hide dots — too cluttered at 500 points
+            pointRadius: 0,
             fill: false,
           },
           {
@@ -144,23 +197,19 @@
             data: [],
             borderColor: '#ff9800',
             borderWidth: 2,
-            borderDash: [6, 3], // dashed line, same as matplotlib's linestyle='--'
+            borderDash: [6, 3],
             pointRadius: 0,
             fill: false,
           },
           {
-            // Ask is the TOP edge of the shaded bid-ask band.
-            // fill: '+1' tells Chart.js to shade the area between this dataset
-            // and the NEXT one (bid), creating the green band.
             label: 'Ask',
             data: [],
-            borderColor: 'transparent',         // hide the line itself
-            backgroundColor: 'rgba(76,175,80,0.15)', // green band fill colour
+            borderColor: 'transparent',
+            backgroundColor: 'rgba(76,175,80,0.15)',
             pointRadius: 0,
             fill: '+1',
           },
           {
-            // Bid is the BOTTOM edge of the band — no fill of its own.
             label: 'Bid',
             data: [],
             borderColor: 'transparent',
@@ -201,19 +250,36 @@
       },
     });
 
+    // ── Reset zoom helper ─────────────────────────────────────────────────────
+    function resetToLive() {
+      priceChart.resetZoom();
+      spreadChart.resetZoom();
+      setLiveMode(true);
+      redraw();
+    }
+
+    liveBtnEl.addEventListener('click', resetToLive);
+
+    // Double-clicking either chart also resets to live
+    document.getElementById('price-chart').addEventListener('dblclick', resetToLive);
+    document.getElementById('spread-chart').addEventListener('dblclick', resetToLive);
+
     // ── Window slider ─────────────────────────────────────────────────────────
-    const slider     = document.getElementById('window-slider');
-    const windowVal  = document.getElementById('window-val');
+    const slider    = document.getElementById('window-slider');
+    const windowVal = document.getElementById('window-val');
 
     slider.addEventListener('input', () => {
       windowVal.textContent = slider.value;
-      redraw();
+      // Changing the window slider exits explore mode and snaps back to live
+      resetToLive();
     });
 
     // ── Redraw ────────────────────────────────────────────────────────────────
-    // Slices the most recent `window` ticks out of each buffer and pushes them
-    // into the chart datasets, then tells Chart.js to re-render.
+    // Only updates chart data when in live mode; ring buffers still fill while
+    // the user is exploring so they see fresh data when they return.
     function redraw() {
+      if (!liveMode) return;
+
       const n = Number(slider.value);
       const labels = tickBuf.tail(n);
 
@@ -222,7 +288,7 @@
       priceChart.data.datasets[1].data = trueBuf.tail(n);
       priceChart.data.datasets[2].data = askBuf.tail(n);
       priceChart.data.datasets[3].data = bidBuf.tail(n);
-      priceChart.update('none'); // 'none' skips Chart.js's built-in transition
+      priceChart.update('none');
 
       spreadChart.data.labels           = labels;
       spreadChart.data.datasets[0].data = spreadBuf.tail(n);
@@ -230,8 +296,6 @@
     }
 
     // ── WebSocket connection ──────────────────────────────────────────────────
-    // `window.location.host` is whatever host:port the page was loaded from,
-    // so this works whether you open localhost:8000 or a real domain name.
     const statusEl = document.getElementById('status');
 
     function connect() {
@@ -243,7 +307,6 @@
       };
 
       ws.onmessage = ({ data }) => {
-        // Protocol: "TICK:<tick>,<bid>,<ask>,<mid>,<true_price>"
         if (!data.startsWith('TICK:')) return;
         const parts = data.slice(5).split(',').map(Number);
         if (parts.length !== 5 || parts.some(isNaN)) return;
@@ -263,11 +326,9 @@
       ws.onclose = () => {
         statusEl.textContent = 'disconnected — reconnecting…';
         statusEl.className   = 'disconnected';
-        // Mirror the bridge's 2 s retry so they come back in sync
         setTimeout(connect, 2000);
       };
 
-      // Let onclose handle the retry — no duplicate logic needed
       ws.onerror = () => ws.close();
     }
 
